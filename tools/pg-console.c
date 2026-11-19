@@ -63,9 +63,12 @@ static void snapshot(bench *b) {
     b->snap.last_input = b->policy.sample;
 }
 
-static void display(const bench *b) {
+static void display(const bench *b, const pg_status *before) {
     const pg_status *s = &b->snap.decision;
     const pg_sample *in = &b->snap.last_input;
+    printf("[%s +%.0f ms] ", b->live ? "QNX" : "SIM", ms(s->as_of_ns - s->epoch));
+    if (before->state != s->state)
+        printf("%s -> ", states[before->state]);
     printf("%s  temp=%.1f C (%s) age=",states[s->state],in->temp_deci_c/10.0,
            in->source == REAL ? "REAL" : in->source == SIMULATED ? "SIMULATED" : "unavailable");
     if (in->acquired_ns && in->acquired_ns <= s->as_of_ns)
@@ -147,13 +150,16 @@ static int readings(bench *b,int argc,char **v) {
         else if (strcmp(v[3],"good")) return 0;
     }
     if (argc == 5 && (!integer(v[4],10,600000,&duration) || duration%10)) return 0;
-    unsigned previous = 99, stage = 99;
     for (long i=0; i<duration; i+=10) {
+        pg_status before = b->snap.decision;
         if (!frame(b,(int)lround(temp*10),cores,(int)power,quality)) return -1;
         pg_status *s = &b->snap.decision;
-        if (s->state != previous || s->stage != stage || i+10 == duration) display(b);
-        previous = s->state;
-        stage = s->stage;
+        if (i == 0 || i+10 == duration || s->state != before.state ||
+            s->decision_id != before.decision_id || s->causes != before.causes ||
+            s->effective_ns != before.effective_ns || s->clear_since_ns != before.clear_since_ns) {
+            display(b,&before);
+            fflush(stdout); /* Show the line immediately in the Momentics Console. */
+        }
 #ifdef __QNXNTO__
         if (b->live && i+10 < duration) {
             struct timespec delay = {.tv_nsec=PG_TICK};
