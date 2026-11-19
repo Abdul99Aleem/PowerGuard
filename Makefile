@@ -41,26 +41,32 @@ LDFLAGS_all += $(LDFLAGS_$(BUILD_PROFILE))
 LIBS_all += $(LIBS_$(BUILD_PROFILE))
 DEPS = -Wp,-MMD,$(@:%.o=%.d),-MT,$@
 
-#Macro to expand files recursively: parameters $1 -  directory, $2 - extension, i.e. cpp
-rwildcard = $(wildcard $(addprefix $1/*.,$2)) $(foreach d,$(wildcard $1/*),$(call rwildcard,$d,$2))
+# Each executable has its own entry point and shares the same policy and metrics.
+.DEFAULT_GOAL := all
+.PHONY: all clean rebuild
+INCLUDES += -Iinclude
+CCFLAGS_all += -std=gnu11
 
-#Source list
-SRCS = $(call rwildcard, src, c)
+CORE_OBJS = $(OUTPUT_DIR)/supervisor/policy.o $(OUTPUT_DIR)/supervisor/metrics.o
+SERVICE_OBJS = $(CORE_OBJS) $(OUTPUT_DIR)/src/PowerGuard.o
+CONSOLE_OBJS = $(CORE_OBJS) $(OUTPUT_DIR)/tools/pg-console.o
+CHECK_OBJS = $(CORE_OBJS) $(OUTPUT_DIR)/tests/replay.o $(OUTPUT_DIR)/tests/metric_checks.o
+OBJS = $(sort $(SERVICE_OBJS) $(CONSOLE_OBJS) $(CHECK_OBJS))
 
-#Object files list
-OBJS = $(addprefix $(OUTPUT_DIR)/,$(addsuffix .o, $(basename $(SRCS))))
+all: $(TARGET) $(OUTPUT_DIR)/pg-console $(OUTPUT_DIR)/pg-check
 
-#Compiling rule
 $(OUTPUT_DIR)/%.o: %.c
 	@mkdir -p $(dir $@)
 	$(CC) -c $(DEPS) -o $@ $(INCLUDES) $(CCFLAGS_all) $(CCFLAGS) $<
 
-#Linking rule
-$(TARGET):$(OBJS)
-	$(LD) -o $(TARGET) $(LDFLAGS_all) $(LDFLAGS) $(OBJS) $(LIBS_all) $(LIBS)
+$(TARGET): $(SERVICE_OBJS)
+	$(LD) -o $@ $(LDFLAGS_all) $(LDFLAGS) $^ $(LIBS_all) $(LIBS)
 
-#Rules section for default compilation and linking
-all: $(TARGET)
+$(OUTPUT_DIR)/pg-console: $(CONSOLE_OBJS)
+	$(LD) -o $@ $(LDFLAGS_all) $(LDFLAGS) $^ $(LIBS_all) $(LIBS) -lm
+
+$(OUTPUT_DIR)/pg-check: $(CHECK_OBJS)
+	$(LD) -o $@ $(LDFLAGS_all) $(LDFLAGS) $^ $(LIBS_all) $(LIBS)
 
 clean:
 	rm -fr $(OUTPUT_DIR)
