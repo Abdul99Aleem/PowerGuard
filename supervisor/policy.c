@@ -1,9 +1,17 @@
 #include "policy.h"
 #include <string.h>
 
-/* Stages are ordered from least to most restrictive. */
-static const unsigned caps[][2] = {{100,100},{100,50},{100,0},{50,0},{0,0}};
-static const unsigned state_for_stage[] = {NORMAL,WARNING,THROTTLED,THROTTLED,CRITICAL};
+/* Background CPU caps, ordered from full service to maximum restriction. */
+static const struct {
+    enum pg_state state;
+    unsigned nc1_percent, nc2_percent;
+} stages[] = {
+    { NORMAL,    100, 100 },
+    { WARNING,   100,  50 },
+    { THROTTLED, 100,   0 },
+    { THROTTLED,  50,   0 },  /* halfway through restoring NC1 */
+    { CRITICAL,    0,   0 }
+};
 
 /* All three comparators include equality. Values in the gap hold the caps. */
 typedef struct { int clear, warn, throttle, critical; } limits;
@@ -34,12 +42,52 @@ int pg_recovery_ready(const pg_policy *p) {
 
 static void set_stage(pg_status *s, unsigned stage, uint64_t now) {
     s->stage = stage;
-    s->nc1_pct = caps[stage][0];
-    s->nc2_pct = caps[stage][1];
+    s->nc1_pct = stages[stage].nc1_percent;
+    s->nc2_pct = stages[stage].nc2_percent;
     ++s->decision_id;
     s->issued_ns = now;
     s->effective_ns = 0;
     s->clear_since_ns = 0;
+}
+
+/* The supervisor FSM. A larger stage gives the background workers less CPU. */
+static void advance_fsm(pg_status *s, unsigned required_stage,
+                        int below_recovery_limits, uint64_t now) {
+    /* From any state, a fault or overload immediately enforces the tighter cap. */
+    if (required_stage != 0) {
+        if (required_stage > s->stage) set_stage(s, required_stage, now);
+        s->state = stages[s->stage].state;
+        s->clear_since_ns = 0;
+        return;
+    }
+
+    /* A release requires continuous headroom and confirmation of the last cap. */
+    if (!below_recovery_limits || !s->effective_ns) {
+        s->clear_since_ns = 0;
+        return;
+    }
+    if (s->state == NORMAL) return;
+    if (!s->clear_since_ns) s->clear_since_ns = now;
+    if (now - s->clear_since_ns < PG_DWELL) return;
+
+    switch (s->state) {
+    case CRITICAL:
+    case THROTTLED:
+    case WARNING:
+        s->state = RECOVERY;
+        set_stage(s, s->stage - 1, now);
+        break;
+    case RECOVERY:
+        if (s->stage > 0) {
+            set_stage(s, s->stage - 1, now);
+        } else {
+            s->state = NORMAL;
+            s->clear_since_ns = 0;
+        }
+        break;
+    case NORMAL:
+        break;
+    }
 }
 
 void pg_init(pg_policy *p, uint64_t now) {
@@ -169,25 +217,5 @@ void pg_tick(pg_policy *p, uint64_t now) {
     s->causes = causes;
     if (!pg_recovery_ready(p)) p->healthy_since_ns = 0;
     else if (!p->healthy_since_ns) p->healthy_since_ns = now;
-    if (required) {
-        if (required > s->stage) set_stage(s, required, now);
-        s->state = state_for_stage[s->stage];
-        s->clear_since_ns = 0;
-        return;
-    }
-    if (in->temp_deci_c > thermal.clear || peak > cpu.clear ||
-        index > power.clear || !s->effective_ns) {
-        s->clear_since_ns = 0;
-        return;
-    }
-    if (s->state == NORMAL) return;
-    if (!s->clear_since_ns) s->clear_since_ns = now;
-    if (now - s->clear_since_ns < PG_DWELL) return;
-    if (s->stage) {
-        set_stage(s, s->stage - 1, now);
-        s->state = RECOVERY;
-    } else {
-        s->state = NORMAL;
-        s->clear_since_ns = 0;
-    }
+    advance_fsm(s, required, pg_recovery_ready(p), now);
 }
