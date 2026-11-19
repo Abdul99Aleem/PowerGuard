@@ -1,0 +1,53 @@
+# QNX Momentics / Eclipse: keep project descriptions versioned
+# .project, .cproject and portable .settings/ SHOULD be committed.
+.metadata/
+.recommenders/
+*.launch.local
+
+# Generated builds and intermediate directories
+Debug/
+Release/
+build/
+out/
+bin/
+obj/
+**/.qnx_internal/
+
+# Compiled artifacts and dependency outputs
+*.o
+*.obj
+*.a
+*.so
+*.so.*
+*.dll
+*.exe
+*.d
+*.map
+*.elf
+*.hex
+*.bin
+
+# Trace, benchmark and logs (store approved evidence separately)
+results/
+*.kev
+*.log
+*.trace
+*.tmp
+*.bak
+*~
+*.swp
+*.swo
+
+# OS / editor clutter
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Secrets and machine-specific configuration
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+*.p12
