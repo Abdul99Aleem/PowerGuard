@@ -3,7 +3,11 @@
 **Deterministic Power and Thermal-Budget Management for QNX Edge Systems**  
 **Team Schedulix · QNX eHACK National Finals · QNXHACK-HYD-014**
 
-> **Project status:** Repository bootstrap. The only available uploaded source is a Hello World C scaffold; no PowerGuard controller, sensor, scheduler or measured results are claimed complete. The **full QNX Momentics IDE project** (especially `.project`, `.cproject`, source and build rules) must still be imported from the local workstation.
+**Jury quick start on the prepared Pi:** `cd /tmp/pg-t3-merge-2111` then
+`sh jury-demo.sh 1 2 3 4`. The [jury runbook](docs/jury-runbook.md) gives the
+presentation sequence, commands and evidence locations. Submission scope is fixed.
+
+> **Project status:** The QNX 8 ThreadCtl runtime retains its independent enforcer and integrates teammate-3's workload and benchmark improvements. Pi tests cover 30 manager stalls, ten manager restarts, and a persistent supervisor-watchdog latch. See the [integration report](docs/teammate3-merge-validation.md) and [current checklist](docs/threadctl-checklist.md) for measured scopes, retained fault results and remaining real-thermal/LED qualification.
 
 ## Project goal
 
@@ -42,27 +46,50 @@ Five scored metrics: detection-to-effective-restriction latency, critical deadli
 
 ## Repository and Momentics setup
 
+### Documentation
+
+| Document | What it covers |
+| --- | --- |
+| [Architecture and problem resolution](docs/powerguard-design-and-manager-stall-fix.md) | Original gaps, before/after message flows, ThreadCtl design, root cause, timing definitions, source map and troubleshooting |
+| [Integration and showcase guide](docs/threadctl-integration.md) | Build, process placement, required binaries, launch, operator commands and Pi test scenarios |
+| [Manager-stall validation](docs/manager-stall-fix-validation.md) | Fault injection, immutable supervisor receipts, before-fix comparison and measured results |
+| [Completion and qualification checklist](docs/threadctl-checklist.md) | Implemented and Pi-tested items, metric coverage and remaining work |
+| [Portable validation summary](docs/validation/manager-stall-pi4-summary.json) | Aggregate measurements, test configuration and captured release-build hashes |
+| [Initial ThreadCtl results](docs/threadctl-pi-validation.md) | Historical initial results and failures before the independent enforcer fix |
+
+The [ThreadCtl integration guide](docs/threadctl-integration.md) describes the
+new separate-process runtime, CPU affinity/readback, FIFO readiness, per-core
+measurement and Pi validation. Use `pg-runtime` for that stack; `pgbench serve`
+remains the legacy threaded bench. See the [completion and Pi testing checklist](docs/threadctl-checklist.md)
+for implementation and measured acceptance status.
+
 **Keep portable IDE metadata in Git**: `.project`, `.cproject`, applicable `.settings/` preferences, source, headers, and the actual project Makefiles. **Do not commit** compiled binaries, generated build output, Eclipse workspace `.metadata/`, private credentials, or captured result bundles.
 
-The bootstrap source at `src/PowerGuard.c` is just the user-supplied Hello World example. The original local project is at:
+### Build and try the supervisor
 
-```text
-C:\Users\User\ide-8.0.3-workspace\PowerGuard
+Import the cloned repository using **File → Import → General → Existing Projects into Workspace** in Momentics 8. Select **PowerGuard**, choose **aarch64le-debug**, and run **Project → Build Project**. From a QNX SDP 8 environment, `make all` builds the supervisor, clients, runtime, independent enforcer and checks in `build/aarch64le-debug/`. Build `testbench/` separately for its operator client. All bench-protocol-v4 components must be rebuilt together.
+
+| Program | How to run it |
+|---|---|
+| `pg-console` | For a first run, choose this binary in a C/C++ QNX Application launch configuration on your Pi. Enter `55 86 30` as the arguments (temperature °C, busiest-core CPU %, power index). The simulated policy reports **Throttled**, NC1 100%, NC2 0%. Leave arguments empty for interactive input or use `--example` for a scored scenario. |
+| `pg-check` | Run without arguments to exercise the policy transitions, freshness, acknowledgements and five scoring calculations. |
+| `PowerGuard` | Run `PowerGuard 25` for the validated ThreadCtl configuration. The service requires verified CPU0 placement and a priority below critical control's priority 30. |
+| `pg-runtime` | Use `serve` with four verified idle-thread IDs; it starts the three separate worker processes. Use `status`, `record`, `samples` and `watchdog` for the integrated stack. |
+| `pg-enforcer` | Required independent command/effect reporter for the ThreadCtl stack; start after the supervisor and runtime are available. |
+| `pg-manager` | Supplies telemetry, complete critical-job batches and sequenced progress. Enforcement remains available when this process is suspended. |
+| `pg-threadctl-check`, `pg-manager-check` | Target API and manager-progress/receipt regression checks. |
+| `pg-validate`, `pg-stall-check` | Target state/readiness assertions and the live manager-stall receipt bound check. |
+
+In a local console session, try `55 30 30 frozen`, then `55 30 30 good 3100` to see progressive recovery. In live mode the supervisor starts conservatively. A producer supplies fresh measurements and the workload manager acknowledges effective caps. Use `pg-console --live scores` to read the scorecard. The scenario driver can also supply labelled simulated input, e.g. `pg-console --live 55 86 30 good 1000` in place of the regular producer for that run.
+
+The [IPC header](include/ipc.h) defines the local versioned contract. Use `PG_SAMPLE` for a derived power estimate or `PG_SAMPLE_POWER` for an explicit index. In the ThreadCtl stack, the independent enforcer reads decisions and sends `PG_EFFECT_CONFIRMED`; `PG_CONFIRM_READ` exposes the supervisor's first accepted receipt. The manager sends `PG_MANAGER_HEARTBEAT` independently of effect reporting and one `PG_JOB` per captured release. `PG_TRIAL` and `PG_SCORE` provide comparable transitions and the five scored metrics. All timestamps use the target's monotonic clock. Thirty Pi manager-stall trials passed the 20 ms bound from the unchanged 50 ms progress-expiry deadline; this is not a claim of 20 ms from fault injection or an unconditional platform guarantee.
+
+The portable tests can also run on a development host with a C11 compiler:
+
+```sh
+cc -std=c11 -Wall -Wextra -Werror -Iinclude -Itestbench supervisor/policy.c supervisor/metrics.c tests/replay.c tests/metric_checks.c -o pg-check
+./pg-check
 ```
-
-The connection to GitHub **cannot read this local Windows directory**. Before calling the repository a buildable Momentics project, compare/import the **real local project tree** and confirm `.project` and `.cproject` are present.
-
-### For a teammate: clone and import
-
-Install Git and the compatible QNX SDP/Momentics environment. In PowerShell:
-
-```powershell
-cd "$HOME"
-git clone https://github.com/Abdul99Aleem/PowerGuard.git
-cd PowerGuard
-```
-
-Once the real Momentics metadata has been pushed: **Momentics IDE → File → Import → General → Existing Projects into Workspace**, select this cloned folder, leave **Copy projects into workspace** unchecked, and verify the configured QNX toolchain, architecture and build variant before building. Until the metadata is committed, this import will not recreate the IDE project.
 
 ### Working on an assigned card
 
@@ -79,26 +106,27 @@ git push -u origin feature/PG-05-cpu-worker
 
 Create a pull request to `main` and request review from a teammate. One owner per module; review shared IPC header changes in advance. Do not mark cards done without target-specific acceptance evidence.
 
-## Initial project layout (planned)
+## Project layout
 
 ```text
 PowerGuard/
 ├── README.md
 ├── .gitignore
-├── src/PowerGuard.c             # Hello World placeholder only
-├── include/                     # versioned IPC/configuration headers (planned)
+├── src/PowerGuard.c             # QNX supervisor service
+├── include/                     # supervisor policy, metrics and IPC headers
 ├── critical/                    # R
 ├── workloads/                   # A
 ├── manager/                     # A
 ├── watchdog/                    # A
-├── supervisor/                  # K
+├── supervisor/                  # policy and metric calculations (K)
 ├── thermal/                     # K
 ├── power/                       # K
 ├── telemetry/                   # R/K
 ├── cli/                         # K
 ├── gpio/                        # A
 ├── platform/qnx/                # R
-├── tests/                       # host, QNX and scenario checks
+├── tools/pg-console.c           # interactive test and IPC client
+├── tests/                       # portable policy and scorecard checks
 ├── docs/
 └── results/                     # generated runs (ignored)
 ```

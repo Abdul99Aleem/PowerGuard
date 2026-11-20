@@ -41,26 +41,78 @@ LDFLAGS_all += $(LDFLAGS_$(BUILD_PROFILE))
 LIBS_all += $(LIBS_$(BUILD_PROFILE))
 DEPS = -Wp,-MMD,$(@:%.o=%.d),-MT,$@
 
-#Macro to expand files recursively: parameters $1 -  directory, $2 - extension, i.e. cpp
-rwildcard = $(wildcard $(addprefix $1/*.,$2)) $(foreach d,$(wildcard $1/*),$(call rwildcard,$d,$2))
+# Each executable has its own entry point and shares the same policy and metrics.
+.DEFAULT_GOAL := all
+.PHONY: all clean rebuild
+INCLUDES += -Iinclude -Itestbench
+CCFLAGS_all += -std=gnu11
 
-#Source list
-SRCS = $(call rwildcard, src, c)
+CORE_OBJS = $(OUTPUT_DIR)/supervisor/policy.o $(OUTPUT_DIR)/supervisor/metrics.o
+THREADCTL_OBJ = $(OUTPUT_DIR)/platform/threadctl.o
+PROGRESS_OBJ = $(OUTPUT_DIR)/platform/progress.o
+SERVICE_OBJS = $(CORE_OBJS) $(OUTPUT_DIR)/src/PowerGuard.o $(THREADCTL_OBJ) $(PROGRESS_OBJ)
+CONSOLE_OBJS = $(CORE_OBJS) $(OUTPUT_DIR)/tools/pg-console.o
+CHECK_OBJS = $(CORE_OBJS) $(OUTPUT_DIR)/tests/replay.o $(OUTPUT_DIR)/tests/metric_checks.o
+MANAGER_OBJS = $(OUTPUT_DIR)/manager/pg-manager.o $(THREADCTL_OBJ)
+LED_OBJS = $(OUTPUT_DIR)/gpio/pg-state-leds.o
+RUNTIME_OBJS = $(OUTPUT_DIR)/runtime/runtime.o $(OUTPUT_DIR)/runtime/worker.o $(THREADCTL_OBJ) $(PROGRESS_OBJ)
+THREADCTL_CHECK_OBJS = $(OUTPUT_DIR)/tests/threadctl_checks.o $(THREADCTL_OBJ)
+VALIDATE_OBJS = $(OUTPUT_DIR)/tools/pg-validate.o
+ENFORCER_OBJS = $(OUTPUT_DIR)/runtime/enforcer.o $(THREADCTL_OBJ)
+STALL_CHECK_OBJS = $(OUTPUT_DIR)/tools/pg-stall-check.o $(THREADCTL_OBJ)
+MANAGER_CHECK_OBJS = $(OUTPUT_DIR)/tests/manager_checks.o $(CORE_OBJS)
+MERGE_CHECK_OBJS = $(OUTPUT_DIR)/tests/merge_checks.o $(CORE_OBJS)
+SUPERVISOR_CHECK_OBJS = $(OUTPUT_DIR)/tools/pg-supervisor-check.o $(THREADCTL_OBJ) $(PROGRESS_OBJ)
+OBJS = $(sort $(SERVICE_OBJS) $(CONSOLE_OBJS) $(CHECK_OBJS) $(MANAGER_OBJS) $(LED_OBJS) $(RUNTIME_OBJS) $(THREADCTL_CHECK_OBJS) $(VALIDATE_OBJS) $(ENFORCER_OBJS) $(STALL_CHECK_OBJS) $(MANAGER_CHECK_OBJS))
+OBJS += $(MERGE_CHECK_OBJS) $(SUPERVISOR_CHECK_OBJS)
 
-#Object files list
-OBJS = $(addprefix $(OUTPUT_DIR)/,$(addsuffix .o, $(basename $(SRCS))))
+all: $(TARGET) $(OUTPUT_DIR)/pg-console $(OUTPUT_DIR)/pg-check $(OUTPUT_DIR)/pg-manager $(OUTPUT_DIR)/pg-state-leds $(OUTPUT_DIR)/pg-thermal $(OUTPUT_DIR)/pg-runtime $(OUTPUT_DIR)/pg-threadctl-check $(OUTPUT_DIR)/pg-validate $(OUTPUT_DIR)/pg-enforcer $(OUTPUT_DIR)/pg-stall-check $(OUTPUT_DIR)/pg-manager-check $(OUTPUT_DIR)/pg-merge-check $(OUTPUT_DIR)/pg-supervisor-check
 
-#Compiling rule
+$(OUTPUT_DIR)/pg-supervisor-check: $(SUPERVISOR_CHECK_OBJS)
+	$(LD) -o $@ $(LDFLAGS_all) $(LDFLAGS) $^ $(LIBS_all) $(LIBS)
+
+$(OUTPUT_DIR)/pg-merge-check: $(MERGE_CHECK_OBJS)
+	$(LD) -o $@ $(LDFLAGS_all) $(LDFLAGS) $^ $(LIBS_all) $(LIBS)
+
+$(OUTPUT_DIR)/pg-enforcer: $(ENFORCER_OBJS)
+	$(LD) -o $@ $(LDFLAGS_all) $(LDFLAGS) $^ $(LIBS_all) $(LIBS)
+
+$(OUTPUT_DIR)/pg-stall-check: $(STALL_CHECK_OBJS)
+	$(LD) -o $@ $(LDFLAGS_all) $(LDFLAGS) $^ $(LIBS_all) $(LIBS)
+
+$(OUTPUT_DIR)/pg-manager-check: $(MANAGER_CHECK_OBJS)
+	$(LD) -o $@ $(LDFLAGS_all) $(LDFLAGS) $^ $(LIBS_all) $(LIBS)
+
+$(OUTPUT_DIR)/pg-validate: $(VALIDATE_OBJS)
+	$(LD) -o $@ $(LDFLAGS_all) $(LDFLAGS) $^ $(LIBS_all) $(LIBS)
+
+$(OUTPUT_DIR)/pg-runtime: $(RUNTIME_OBJS)
+	$(LD) -o $@ $(LDFLAGS_all) $(LDFLAGS) $^ $(LIBS_all) $(LIBS) -pthread
+
+$(OUTPUT_DIR)/pg-threadctl-check: $(THREADCTL_CHECK_OBJS)
+	$(LD) -o $@ $(LDFLAGS_all) $(LDFLAGS) $^ $(LIBS_all) $(LIBS) -pthread
+
+$(OUTPUT_DIR)/pg-thermal: $(OUTPUT_DIR)/telemetry/thermal.o $(OUTPUT_DIR)/supervisor/policy.o $(THREADCTL_OBJ)
+	$(LD) -o $@ $(LDFLAGS_all) $(LDFLAGS) $^ $(LIBS_all) $(LIBS) -lm
+
 $(OUTPUT_DIR)/%.o: %.c
 	@mkdir -p $(dir $@)
 	$(CC) -c $(DEPS) -o $@ $(INCLUDES) $(CCFLAGS_all) $(CCFLAGS) $<
 
-#Linking rule
-$(TARGET):$(OBJS)
-	$(LD) -o $(TARGET) $(LDFLAGS_all) $(LDFLAGS) $(OBJS) $(LIBS_all) $(LIBS)
+$(TARGET): $(SERVICE_OBJS)
+	$(LD) -o $@ $(LDFLAGS_all) $(LDFLAGS) $^ $(LIBS_all) $(LIBS)
 
-#Rules section for default compilation and linking
-all: $(TARGET)
+$(OUTPUT_DIR)/pg-console: $(CONSOLE_OBJS)
+	$(LD) -o $@ $(LDFLAGS_all) $(LDFLAGS) $^ $(LIBS_all) $(LIBS) -lm
+
+$(OUTPUT_DIR)/pg-check: $(CHECK_OBJS)
+	$(LD) -o $@ $(LDFLAGS_all) $(LDFLAGS) $^ $(LIBS_all) $(LIBS)
+
+$(OUTPUT_DIR)/pg-manager: $(MANAGER_OBJS)
+	$(LD) -o $@ $(LDFLAGS_all) $(LDFLAGS) $^ $(LIBS_all) $(LIBS)
+
+$(OUTPUT_DIR)/pg-state-leds: $(LED_OBJS)
+	$(LD) -o $@ $(LDFLAGS_all) $(LDFLAGS) $^ $(LIBS_all) $(LIBS)
 
 clean:
 	rm -fr $(OUTPUT_DIR)
@@ -69,3 +121,4 @@ rebuild: clean all
 
 #Inclusion of dependencies (object files to source and includes)
 -include $(OBJS:%.o=%.d)
+-include $(OUTPUT_DIR)/telemetry/thermal.d

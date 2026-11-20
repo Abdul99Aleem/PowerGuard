@@ -1,0 +1,167 @@
+{
+  "report_type": "curated aggregate validation summary; raw captures and binaries are not versioned",
+  "validation_date_local": "2026-11-21",
+  "timezone": "Asia/Calcutta",
+  "target": {
+    "ip": "10.78.56.80",
+    "reported_os": "QNX 8.0.0",
+    "reported_board": "RaspberryPi4B",
+    "architecture": "aarch64le",
+    "cpus": 4,
+    "test_user": "root",
+    "staging_directory": "/tmp/pg-manager-stall-2111"
+  },
+  "build": {
+    "sdk": "QNX SDP 8",
+    "compiler": "GCC 12.2.0",
+    "profile": "release",
+    "flags": [
+      "-O2",
+      "-Wextra",
+      "-Werror",
+      "-fanalyzer"
+    ],
+    "captured_binary_sha256": {
+      "PowerGuard": "6a2a148e25064e98f8295e04be982149c2fe9a0cb397606a7ab55af4e341436a",
+      "pg-runtime": "c2361bba505bbb6b5098c3083c1ca895e83ce9d71c9371d81621b09231b32d15",
+      "pg-manager": "b243124d8bae085c47e147a7ccff30263afaa37d9e04d5a145474052898ef515",
+      "pg-enforcer": "d3abebc3716b0fa066358b022f2f8d1562982a0ed39d0c19ee0faa7cf32f1e68",
+      "pg-stall-check": "610dd9ae4cbd11bcf97e0fcb38031d49fdee92cebbdba9d2ac7a2b8dcd305788"
+    }
+  },
+  "timing_contract_ns": {
+    "manager_progress_timeout": 50000000,
+    "response_target": 20000000,
+    "critical_period": 10000000,
+    "critical_deadline": 5000000,
+    "worker_period": 5000000,
+    "cpu_sliding_window": 100000000,
+    "cpu_refresh": 10000000,
+    "initial_clear_dwell": 2000000000,
+    "additional_restore_dwell": 1000000000
+  },
+  "before_fix": {
+    "legacy_fault_restriction_score_worst_ns": 967984000,
+    "explicit_first_supervisor_receipt_instrumented": false
+  },
+  "manager_stall_audit": {
+    "source": "repeat30/stall-confirmations.txt",
+    "trials": 30,
+    "minimum_required": 30,
+    "manager_deadline_ns": 50000000,
+    "confirmation_limit_ns": 20000000,
+    "worst_confirmation_ns": 11653796,
+    "min_confirmation_ns": 6477241,
+    "worst_effect_ns": 10999389,
+    "worst_pause_to_confirmation_ns": 61251740,
+    "unique_decisions": 30,
+    "errors": [],
+    "pass": true
+  },
+  "all_restriction_receipts": {
+    "repeat30": {
+      "restrictions": 32,
+      "worst_supervisor_confirmation_ns": 12856777,
+      "late_confirmations": 0,
+      "causes": {
+        "0": 1,
+        "8": 1,
+        "64": 30
+      }
+    },
+    "nominal": {
+      "restrictions": 5,
+      "worst_supervisor_confirmation_ns": 8904333,
+      "late_confirmations": 0,
+      "causes": {
+        "1": 2,
+        "6": 2,
+        "8": 1
+      }
+    },
+    "combined": {
+      "restrictions": 37,
+      "worst_supervisor_confirmation_ns": 12856777,
+      "late_confirmations": 0
+    }
+  },
+  "captures": {
+    "repeat30": {
+      "target_run": "threadctl-results-21635128",
+      "critical_jobs": {
+        "source": "repeat30/jobs.csv",
+        "first_id": 1,
+        "last_id": 16363,
+        "jobs": 16363,
+        "gaps": [],
+        "invalid_timestamps": [],
+        "period_errors": 0,
+        "deadline_misses": 0,
+        "missed_ids": [],
+        "response": {
+          "n": 16363,
+          "p50_ns": 631537,
+          "p95_ns": 640796,
+          "p99_ns": 643685,
+          "max_ns": 1179685
+        },
+        "release_lateness": {
+          "n": 16363,
+          "p50_ns": 20167,
+          "p95_ns": 22796,
+          "p99_ns": 34833,
+          "max_ns": 679352
+        },
+        "execution_wall_time": {
+          "n": 16363,
+          "p50_ns": 612149,
+          "p95_ns": 620741,
+          "p99_ns": 621797,
+          "max_ns": 666852
+        },
+        "pass": true
+      }
+    },
+    "nominal": {
+      "target_run": "threadctl-results-24981558",
+      "critical_jobs": {
+        "source": "nominal/jobs.csv",
+        "first_id": 1,
+        "last_id": 6031,
+        "jobs": 6031,
+        "gaps": [],
+        "invalid_timestamps": [],
+        "period_errors": 0,
+        "deadline_misses": 0,
+        "missed_ids": [],
+        "response": {
+          "n": 6031,
+          "p50_ns": 487963,
+          "p95_ns": 621222,
+          "p99_ns": 627500,
+          "max_ns": 1150148
+        },
+        "release_lateness": {
+          "n": 6031,
+          "p50_ns": 20148,
+          "p95_ns": 21944,
+          "p99_ns": 26185,
+          "max_ns": 657870
+        },
+        "execution_wall_time": {
+          "n": 6031,
+          "p50_ns": 466759,
+          "p95_ns": 599944,
+          "p99_ns": 606018,
+          "max_ns": 629926
+        },
+        "pass": true
+      }
+    }
+  },
+  "combined_archived_critical_jobs": 22394,
+  "combined_deadline_misses": 0,
+  "combined_record_gaps": 0,
+  "worst_critical_response_ns": 1179685,
+  "qualification_status": "passing finite Pi 4 tests; see docs/threadctl-checklist.md for remaining qualification"
+}
