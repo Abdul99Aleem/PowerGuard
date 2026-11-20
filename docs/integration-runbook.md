@@ -1,5 +1,14 @@
 # Integrated QNX runbook
 
+For the ThreadCtl PRD implementation, use the separate-process `pg-runtime`
+stack in [ThreadCtl integration](threadctl-integration.md). It provides verified
+CPU placement, FIFO readiness, per-core idle-counter telemetry, a watchdog and
+complete batched critical-job reporting. `pg-runtime status` consolidates the
+operator view. The sequence below describes the retained legacy threaded bench;
+it does not validate ThreadCtl placement. Bench protocol v4 requires rebuilding
+pgbench, pg-runtime, pg-enforcer and pg-manager together. The ThreadCtl stack
+requires pg-enforcer for confirmation independent of manager progress.
+
 `pg-manager` is the connection between the policy service and the QNX
 testbench. It publishes the testbench's explicitly simulated temperature and
 process-CPU samples, forwards each policy NC1/NC2 cap to the workers, waits for
@@ -58,4 +67,4 @@ for a poll. During a state change it turns the previous LED off before
 turning the next one on. Verify that all five go dark when the supervisor
 is unavailable, that the current state appears again after the supervisor
 restarts, and that all five go dark on Ctrl+C or SIGTERM.
-Rebuild pg-manager and pgbench together for bench protocol v2. The supervisor remains on PG_VERSION 1. Workers start closed. The manager renews absolute 50 ms grants and the workers reject expired or superseded grants. A stalled manager cannot renew a grant. In a managed run, use scenario commands to change inputs. Manual level commands are for a standalone bench. An independently verified source and genuine per-core measurements still need to be supplied by the board monitor. The current testbench reports an explicitly simulated temperature and uses process CPU as its load proxy.
+Rebuild pg-manager and pgbench together for bench protocol v4. The supervisor remains on PG_VERSION 1 with additive progress/confirmation extensions. In this legacy bench the manager renews absolute 50 ms grants and workers reject expired or superseded grants. The ThreadCtl stack instead uses an independent enforcer and a separately timed manager-progress heartbeat. Use scenario commands for a managed run; manual levels are for a standalone legacy bench. The legacy testbench uses simulated temperature and process CPU, while pg-runtime supplies actual per-core utilization.

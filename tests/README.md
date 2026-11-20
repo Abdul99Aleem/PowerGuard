@@ -1,5 +1,15 @@
 # Regression suite
 
+For the separate-process ThreadCtl runtime and the manager-stall fix, see the
+[complete architecture and problem-resolution guide](../docs/powerguard-design-and-manager-stall-fix.md)
+and [Pi validation report](../docs/manager-stall-fix-validation.md).
+`pg-threadctl-check` tests the QNX thread-control interfaces;
+`pg-manager-check` checks progress expiry and immutable receipt timing;
+`pg-stall-check` measures supervisor confirmation while the manager remains
+SIGSTOP'ed. The updated `scripts/validate-threadctl.sh` orchestrates these tests
+with isolated service names. Run it from a directory containing the full
+bench-protocol-v4 bundle, including `pg-enforcer`.
+
 `pg-check` is the deterministic regression executable. It runs policy and
 metric assertions without a board and covers startup fail-safe behavior,
 thermal thresholds, one-core CPU overload, estimated-power overload,

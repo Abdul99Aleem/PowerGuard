@@ -2,6 +2,7 @@
 QCC ?= qcc
 ARCH ?= aarch64le
 CFLAGS ?= -O2 -Wall -Wextra -std=c11 -pthread
+CFLAGS += -I../include
 TARGETS = pgbench pgbench_ham
 all: $(TARGETS)
 

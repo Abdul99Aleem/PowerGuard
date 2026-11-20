@@ -1,5 +1,6 @@
-/* K's single-owner policy service. Only local same-ABI clients use this draft. */
+/* The supervisor owns the policy state. Clients on this board share its IPC layout. */
 #include "ipc.h"
+#include "pg_threadctl.h"
 #include <errno.h>
 #include <sched.h>
 #include <signal.h>
@@ -13,33 +14,66 @@
 
 static uint64_t monotonic_ns(void) {
     struct timespec t;
-    if (clock_gettime(CLOCK_MONOTONIC, &t) == -1) { perror("clock_gettime"); exit(1); }
+    if (clock_gettime(CLOCK_MONOTONIC, &t) == -1) {
+        perror("clock_gettime");
+        exit(1);
+    }
     return (uint64_t)t.tv_sec * UINT64_C(1000000000) + (uint64_t)t.tv_nsec;
 }
 
-/* Enable user event 80 in the QNX trace session to retain state, reasons,
-   dwell starts, commands and matched effects, even between CLI refreshes. */
-static void trace_change(const pg_status *old, const pg_status *s) {
-    if (old->decision_id != s->decision_id || old->state != s->state ||
-        old->causes != s->causes || old->effective_ns != s->effective_ns ||
-        old->clear_since_ns != s->clear_since_ns)
-        (void)trace_logb(80, s, sizeof(*s));
+/* Trace transitions between polls so a short-lived restriction is visible on the trace. */
+static void trace_change(const pg_status *before, const pg_status *after) {
+    if (before->decision_id != after->decision_id ||
+        before->state != after->state ||
+        before->causes != after->causes ||
+        before->effective_ns != after->effective_ns ||
+        before->clear_since_ns != after->clear_since_ns) {
+        (void)trace_logb(80, after, sizeof(*after));
+    }
 }
 
 int main(int argc, char **argv) {
     char *end;
-    if (argc != 2) { fprintf(stderr, "usage: PowerGuard FIFO_PRIORITY\n"); return 2; }
+    if (argc != 2) {
+        fprintf(stderr, "usage: PowerGuard FIFO_PRIORITY\n");
+        return 2;
+    }
+
     long priority = strtol(argv[1], &end, 10);
     if (*end || priority < sched_get_priority_min(SCHED_FIFO) ||
-        priority > sched_get_priority_max(SCHED_FIFO)) return 2;
+        priority > sched_get_priority_max(SCHED_FIFO)) {
+        return 2;
+    }
+
     struct sched_param sched = {.sched_priority = (int)priority};
-    if (sched_setscheduler(0, SCHED_FIFO, &sched) == -1) { perror("SCHED_FIFO"); return 1; }
+    if (sched_setscheduler(0, SCHED_FIFO, &sched) == -1) {
+        perror("SCHED_FIFO");
+        return 1;
+    }
+
+    pg_thread_report placement;
+    if (priority >= 30 || pg_thread_configure(0, (int)priority, "pg-supervisor", &placement)) {
+        fputs("Supervisor requires verified CPU0 affinity and priority below critical priority 30\n", stderr);
+        return 1;
+    }
+    pg_thread_print(&placement);
+
     name_attach_t *server = name_attach(NULL, PG_NAME, 0);
-    if (!server) { perror("name_attach"); return 1; }
+    if (!server) {
+        perror("name_attach");
+        return 1;
+    }
+
+    /* Keep checking sample age even when clients stop sending messages. */
     int coid = ConnectAttach(0, 0, server->chid, _NTO_SIDE_CHANNEL, 0);
-    if (coid == -1) { perror("ConnectAttach"); return 1; }
+    if (coid == -1) {
+        perror("ConnectAttach");
+        return 1;
+    }
+
     struct sigevent event;
     SIGEV_PULSE_INIT(&event, coid, (int)priority, _PULSE_CODE_MINAVAIL, 0);
+
     timer_t timer;
     struct itimerspec tolerance = {.it_value = {.tv_nsec = 1}};
     if (timer_create(CLOCK_MONOTONIC, &event, &timer) == -1 ||
@@ -51,6 +85,7 @@ int main(int argc, char **argv) {
     pg_metrics metrics = {0};
     pg_policy policy;
     pg_init(&policy, monotonic_ns());
+
     uint64_t armed_ns = 0;
     for (;;) {
         uint64_t next = pg_next_deadline(&policy);
@@ -65,28 +100,39 @@ int main(int argc, char **argv) {
             }
             armed_ns = next;
         }
-        union { struct _pulse pulse; pg_message_v1 message; pg_sample_batch batch; } in;
+        union {
+            struct _pulse pulse;
+            pg_message_v1 message;
+            pg_sample_batch batch;
+        } in;
         struct _msg_info info;
-        rcvid_t id = MsgReceive(server->chid, &in, sizeof(in), &info);
-        if (id == -1) { if (errno == EINTR) continue; perror("MsgReceive"); return 1; }
+        rcvid_t rcvid = MsgReceive(server->chid, &in, sizeof(in), &info);
+        if (rcvid == -1) {
+            if (errno == EINTR) {
+                continue;
+            }
+            perror("MsgReceive");
+            return 1;
+        }
         uint64_t now = monotonic_ns();
         pg_status before = policy.status;
-        if (id == 0) {
+        if (rcvid == 0) {
             if (in.pulse.code == _PULSE_CODE_MINAVAIL) {
                 armed_ns = 0;
                 pg_tick(&policy, now);
             }
             pg_observe(&metrics, &before, &policy);
             trace_change(&before, &policy.status);
-            if (in.pulse.code == _PULSE_CODE_DISCONNECT) ConnectDetach(in.pulse.scoid);
+            if (in.pulse.code == _PULSE_CODE_DISCONNECT)
+                ConnectDetach(in.pulse.scoid);
             continue;
         }
-        pg_message_v1 *m = &in.message;
-        if (info.msglen >= (ssize_t)sizeof(m->type) && m->type == PG_SAMPLE_BATCH) {
+        const pg_message_v1 *msg = &in.message;
+        if (info.msglen >= (ssize_t)sizeof(msg->type) && msg->type == PG_SAMPLE_BATCH) {
             pg_sample_batch *b = &in.batch;
             if (info.srcmsglen != sizeof(*b) || info.msglen != sizeof(*b) ||
                 b->version != PG_VERSION || !b->count || b->count > PG_BATCH_MAX) {
-                MsgError(id, EINVAL);
+                MsgError(rcvid, EINVAL);
                 continue;
             }
             for (unsigned i = 0; i < b->count; ++i) {
@@ -95,71 +141,124 @@ int main(int argc, char **argv) {
                 pg_observe(&metrics, &before, &policy);
                 trace_change(&before, &policy.status);
             }
-            MsgReply(id, EOK, &now, sizeof(now));
+            MsgReply(rcvid, EOK, &now, sizeof(now));
             continue;
         }
-        if (info.msglen >= (ssize_t)sizeof(m->type) && m->type == _IO_CONNECT) {
-            MsgReply(id, EOK, NULL, 0); continue;
+        if (info.msglen >= (ssize_t)sizeof(msg->type) && msg->type == _IO_CONNECT) {
+            MsgReply(rcvid, EOK, NULL, 0);
+            continue;
         }
-        if (info.srcmsglen != sizeof(*m) || info.msglen != sizeof(*m) ||
-            m->version != PG_VERSION) { MsgError(id, EINVAL); continue; }
-        switch (m->type) {
+        if (info.srcmsglen != sizeof(*msg) || info.msglen != sizeof(*msg) ||
+            msg->version != PG_VERSION) {
+            MsgError(rcvid, EINVAL);
+            continue;
+        }
+
+        switch (msg->type) {
         case PG_SAMPLE:
-            pg_ingest(&policy, &m->body.sample, now);
+            pg_ingest(&policy, &msg->body.sample, now);
             break;
+
         case PG_SAMPLE_POWER:
-            pg_ingest_power(&policy, &m->body.sample,
-                            m->reserved <= 100 ? (int)m->reserved : -1, now);
+            pg_ingest_power(&policy, &msg->body.sample,
+                            msg->reserved <= 100 ? (int)msg->reserved : -1, now);
             break;
+
         case PG_JOB:
-            if (m->body.job.epoch != policy.status.epoch ||
-                !pg_job(&metrics, m->body.job.id, m->body.job.release_ns,
-                        m->body.job.deadline_ns, m->body.job.finish_ns, now)) {
-                MsgError(id, EINVAL); continue;
+            if (msg->body.job.epoch != policy.status.epoch ||
+                !pg_job(&metrics, msg->body.job.id, msg->body.job.release_ns,
+                        msg->body.job.deadline_ns, msg->body.job.finish_ns, now)) {
+                MsgError(rcvid, EINVAL);
+                continue;
             }
             pg_tick(&policy, now);
             break;
+
         case PG_TRIAL:
-            if (m->body.trial.epoch != policy.status.epoch ||
-                policy.status.state != m->body.trial.from ||
-                !pg_trial(&metrics, m->body.trial.series, m->body.trial.from,
-                          m->body.trial.to, m->body.trial.trigger_ns, now)) {
-                MsgError(id, EINVAL); continue;
+            if (msg->body.trial.epoch != policy.status.epoch ||
+                policy.status.state != msg->body.trial.from ||
+                !pg_trial(&metrics, msg->body.trial.series, msg->body.trial.from,
+                          msg->body.trial.to, msg->body.trial.trigger_ns, now)) {
+                MsgError(rcvid, EINVAL);
+                continue;
             }
             pg_tick(&policy, now);
             break;
+
         case PG_SCORE:
-            if (!m->body.trial.series || m->body.trial.series > PG_CASES ||
-                m->body.trial.from > RECOVERY || m->body.trial.to > RECOVERY) {
-                MsgError(id, EINVAL); continue;
+            if (!msg->body.trial.series || msg->body.trial.series > PG_CASES ||
+                msg->body.trial.from > RECOVERY || msg->body.trial.to > RECOVERY) {
+                MsgError(rcvid, EINVAL);
+                continue;
             }
             pg_tick(&policy, now);
             break;
+
+        case PG_MANAGER_HEARTBEAT:
+            if (!pg_manager_progress(&policy, msg->body.manager.epoch, msg->body.manager.sequence,
+                                     msg->body.manager.progress_ns, now)) {
+                MsgError(rcvid, EINVAL);
+                continue;
+            }
+            break;
+
         case PG_EFFECT:
+        case PG_EFFECT_CONFIRMED:
+            /* A cap acknowledgement can arrive after its lease has expired. */
             pg_tick(&policy, now);
-            if (!pg_effect(&policy, m->body.effect.epoch, m->body.effect.decision_id,
-                           m->body.effect.effective_ns, m->body.effect.nc1_pct,
-                           m->body.effect.nc2_pct, now)) {
+            if (!pg_effect(&policy, msg->body.effect.epoch, msg->body.effect.decision_id,
+                           msg->body.effect.effective_ns, msg->body.effect.nc1_pct,
+                           msg->body.effect.nc2_pct, now)) {
                 pg_observe(&metrics, &before, &policy);
                 trace_change(&before, &policy.status);
-                MsgError(id, EINVAL); continue;
+                MsgError(rcvid, EINVAL);
+                continue;
             }
             break;
+
         case PG_READ:
+        case PG_CONFIRM_READ:
             pg_tick(&policy, now);
             break;
+
         default:
-            MsgError(id, ENOSYS); continue;
+            MsgError(rcvid, ENOSYS);
+            continue;
         }
         pg_observe(&metrics, &before, &policy);
         trace_change(&before, &policy.status);
-        pg_reply_v1 reply = {.version = PG_VERSION, .config_generation = 1,
-                             .decision = policy.status, .last_input = policy.sample};
-        if (m->type == PG_SCORE) {
-            unsigned series = m->body.trial.series, from = m->body.trial.from, to = m->body.trial.to;
-            pg_score_reply report = {.snapshot = reply, .scores = metrics.scores,
-                .jitter = metrics.trials[series-1][from][to], .series = series, .from = from, .to = to};
-            MsgReply(id, EOK, &report, sizeof(report));
-        } else MsgReply(id, EOK, &reply, sizeof(reply));
+        pg_reply_v1 reply = {
+            .version = PG_VERSION,
+            .config_generation = 1,
+            .decision = policy.status,
+            .last_input = policy.sample
+        };
+        if (msg->type == PG_EFFECT_CONFIRMED || msg->type == PG_CONFIRM_READ) {
+            pg_confirmation_reply receipt = {
+                .snapshot = reply,
+                .detected_ns = policy.restriction_decision_id == policy.status.decision_id ?
+                               policy.restriction_from_ns : policy.status.issued_ns,
+                .received_ns = policy.effect_received_id == policy.status.decision_id ? policy.effect_received_ns : 0,
+                .manager_progress_ns = policy.manager_progress_ns,
+                .manager_progress_seq = policy.manager_progress_seq,
+                .restriction = policy.restriction_decision_id == policy.status.decision_id
+            };
+            MsgReply(rcvid, EOK, &receipt, sizeof(receipt));
+        } else if (msg->type == PG_SCORE) {
+            unsigned series = msg->body.trial.series;
+            unsigned from = msg->body.trial.from;
+            unsigned to = msg->body.trial.to;
+            pg_score_reply report = {
+                .snapshot = reply,
+                .scores = metrics.scores,
+                .jitter = metrics.trials[series - 1][from][to],
+                .series = series,
+                .from = from,
+                .to = to
+            };
+            MsgReply(rcvid, EOK, &report, sizeof(report));
+        } else {
+            MsgReply(rcvid, EOK, &reply, sizeof(reply));
+        }
     }
 }

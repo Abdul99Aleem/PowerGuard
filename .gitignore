@@ -21,6 +21,8 @@ obj/
 *.so.*
 *.dll
 *.exe
+__pycache__/
+*.py[cod]
 *.d
 *.map
 *.elf

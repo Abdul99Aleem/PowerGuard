@@ -174,8 +174,25 @@ int pg_effect(pg_policy *p, uint64_t epoch, uint64_t id, uint64_t effective,
         effective < s->issued_ns || effective > now ||
         nc1 != s->nc1_pct || nc2 != s->nc2_pct) return 0;
     if (s->effective_ns && s->effective_ns != effective) return 0;
+    if (p->effect_received_id != id) {
+        p->effect_received_id = id;
+        p->effect_received_ns = now;
+    }
     p->manager_seen_ns = now;
     s->effective_ns = effective;
+    return 1;
+}
+
+int pg_manager_progress(pg_policy *p, uint64_t epoch, uint64_t sequence,
+                        uint64_t progress_ns, uint64_t now) {
+    if (epoch != p->status.epoch || !sequence || sequence <= p->manager_progress_seq ||
+        !fresh(progress_ns, now, PG_MANAGER_MAX_AGE) || progress_ns <= p->manager_progress_ns)
+        return 0;
+    /* Preserve a missed progress deadline even if a resume races the timer. */
+    if (p->manager_progress_seq) pg_tick(p, now);
+    p->manager_progress_seq = sequence;
+    p->manager_progress_ns = progress_ns;
+    pg_tick(p, now);
     return 1;
 }
 
@@ -218,7 +235,11 @@ static void evaluate(pg_policy *p, uint64_t now, unsigned causes, uint64_t detec
         if (bands[i]) causes |= flags[i];
         if (bands[i] > required) required = bands[i];
     }
-    if (causes & (BAD_TEMP | BAD_LOAD)) required = 4;
+    if (p->manager_progress_seq && !fresh(p->manager_progress_ns, now, PG_MANAGER_MAX_AGE)) {
+        causes |= BAD_MANAGER;
+        detected = earlier(detected, p->manager_progress_ns + PG_MANAGER_MAX_AGE);
+    }
+    if (causes & (BAD_TEMP | BAD_LOAD | BAD_MANAGER)) required = 4;
     /* Score from the qualifying measurement or its expiry, including IPC delay. */
     if (p->have_sample) {
         if (bands[0] == required && bands[0] >= NC2_OFF && !(causes & BAD_TEMP))
@@ -244,7 +265,10 @@ static void evaluate(pg_policy *p, uint64_t now, unsigned causes, uint64_t detec
     if (!clear) p->healthy_since_ns = 0;
     else if (!p->healthy_since_ns) p->healthy_since_ns = now;
     advance_fsm(p, required, clear, now);
-    if (s->stage > previous_stage) p->restriction_from_ns = detected;
+    if (s->stage > previous_stage) {
+        p->restriction_from_ns = detected;
+        p->restriction_decision_id = s->decision_id;
+    }
 }
 
 void pg_tick(pg_policy *p, uint64_t now) {
@@ -258,6 +282,7 @@ uint64_t pg_next_deadline(const pg_policy *p) {
                                 s->issued_ns + PG_RESPONSE_TARGET + 1;
     const uint64_t deadlines[] = {
         manager_deadline,
+        p->manager_progress_seq ? p->manager_progress_ns + PG_MANAGER_MAX_AGE : 0,
         p->have_sample ? p->sample.acquired_ns + PG_TEMP_MAX_AGE : 0,
         p->have_sample ? p->sample.load_end_ns + PG_CPU_MAX_AGE : 0,
         p->sample.quality == READ_ONLY ? p->flat_since_ns + PG_FLAT_LIMIT : 0

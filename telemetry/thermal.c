@@ -1,5 +1,6 @@
 /* Pi 4 characterization. Acquire on one thread, deliver on another. */
 #include "ipc.h"
+#include "pg_threadctl.h"
 #include <sys/neutrino.h>
 #include <sys/dispatch.h>
 #include <sys/trace.h>
@@ -167,6 +168,11 @@ int main(int argc,char **argv) {
         fputs("pg-thermal busy|wait|pulse|change C|mC seconds stop_C idle_tid0 idle_tid1 idle_tid2 idle_tid3 [trace] [live] [quiet] [40hz]\n",stderr);
         return 2;
     }
+    pg_thread_report placement;
+    if (pg_thread_configure(0,18,"pg-thermal",&placement)) {
+        perror("thermal ThreadCtl/scheduling qualification"); return 1;
+    }
+    pg_thread_print(&placement);
     int wait=!strcmp(argv[1],"wait"), change=!strcmp(argv[1],"change");
     int busy_wait=!strcmp(argv[1],"busy"), quiet=0;
     uint64_t period=50*PG_MS;

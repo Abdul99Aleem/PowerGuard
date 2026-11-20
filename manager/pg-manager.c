@@ -1,7 +1,9 @@
 /* QNX bridge: pgbench telemetry and worker ACKs <-> PowerGuard policy IPC. */
 #define _POSIX_C_SOURCE 200809L
+#define _QNX_SOURCE 1
 #include "bridge.h"
 #include "ipc.h"
+#include "pg_threadctl.h"
 #include <errno.h>
 #include <signal.h>
 #include <stdint.h>
@@ -40,6 +42,11 @@ static int bounded(int value) {
 
 int main(void) {
     int result = 0;
+    pg_thread_report placement;
+    if (pg_thread_configure(0, 20, "pg-manager", &placement)) {
+        perror("manager ThreadCtl/scheduling qualification"); return 1;
+    }
+    pg_thread_print(&placement);
     int policy_coid = name_open(PG_NAME, 0);
     if (policy_coid == -1) { perror("name_open PowerGuard"); return 1; }
     int bench_coid = name_open(PG_BENCH_NAME, 0);
@@ -48,11 +55,13 @@ int main(void) {
     signal(SIGTERM, stop);
 
     uint64_t last_bench_job = 0, reported_job = 0;
+    uint64_t progress_sequence = 0;
     int last_state = PG_ST_UNKNOWN, last_recovery = -1;
-    puts("pg-manager connected: telemetry, caps, effects, state and jobs are bridged");
+    puts("pg-manager connected: telemetry/jobs/progress; split runtime uses independent enforcement");
     while (running) {
         pg_status_t bench;
         if (!bench_send(bench_coid, PG_CMD_STATUS, 0, 0, &bench)) { perror("pgbench status"); result = 1; break; }
+        int split_runtime = (bench.features & PG_FEATURE_THREADCTL) != 0;
         int cpu = bounded(bench.process_cpu_per_core_tenths / 10);
         int demand2 = bench.scenario == PG_SC_SPIKE ? 90 : 15;
         pg_sample sample;
@@ -61,9 +70,11 @@ int main(void) {
         sample.acquired_ns = bench.thermal_acquired_ns;
         sample.load_end_ns = bench.cpu_window_end_ns;
         sample.temp_deci_c = bench.temperature_milli_c / 100;
-        sample.quality = GOOD; /* The policy ages the original acquisition timestamp. */
+        sample.quality = split_runtime && (bench.ready_mask != 7 || !bench.watchdog_ok || !bench.cpu_valid ||
+                         ((bench.features & PG_FEATURE_ENFORCER) && !bench.enforcer_ok)) ? SENSOR_ERROR : GOOD;
         sample.source = SIMULATED;
-        for (unsigned i = 0; i < 4; ++i) sample.core_busy_pct[i] = cpu;
+        for (unsigned i = 0; i < 4; ++i)
+            sample.core_busy_pct[i] = split_runtime ? bench.core_busy_pct[i] : cpu;
         sample.nc_demand_pct[0] = 20;
         sample.nc_demand_pct[1] = demand2;
 
@@ -75,6 +86,7 @@ int main(void) {
         pg_reply_v1 decision;
         if (!policy_send(policy_coid, &msg, &decision)) { perror("PowerGuard sample"); result = 1; break; }
 
+        if (!(bench.features & PG_FEATURE_ENFORCER)) {
         const pg_status *want = &decision.decision;
         pg_cap_request_t grant = {
             .request = {PG_BENCH_TYPE, PG_BENCH_VERSION, PG_CMD_LEASED_CAPS,
@@ -108,10 +120,35 @@ int main(void) {
             msg.body.effect.nc2_pct = want->nc2_pct;
             if (!policy_send(policy_coid, &msg, &decision) && errno != EINVAL) { perror("PowerGuard effect"); result = 1; break; }
         }
+        }
         /* The manager may attach after pgbench has already run jobs.  Treat
            that first observed ID as a baseline; later source-ID jumps remain
            visible as gaps in the supervisor scorecard. */
-        if (!last_bench_job) last_bench_job = bench.last_job_id;
+        if (split_runtime) {
+            pg_jobs_request query = {.request = {PG_BENCH_TYPE, PG_BENCH_VERSION, PG_CMD_JOBS, 0, 0},
+                                     .after_id = last_bench_job};
+            pg_jobs_reply batch;
+            if (!timed_send(bench_coid, &query, sizeof(query), &batch, sizeof(batch)) || batch.error) {
+                fputs("Critical job stream incomplete/overwritten; qualification failed\n", stderr);
+                result = 1; break;
+            }
+            for (unsigned i = 0; i < batch.count; ++i) {
+                const pg_job_record *job = &batch.jobs[i];
+                if (job->id != last_bench_job + 1) {
+                    fputs("Critical job record gap; qualification failed\n", stderr); result = 1; break;
+                }
+                memset(&msg, 0, sizeof(msg));
+                msg.type = PG_JOB; msg.version = PG_VERSION;
+                msg.body.job.epoch = decision.decision.epoch;
+                msg.body.job.id = ++reported_job;
+                msg.body.job.release_ns = job->release_ns;
+                msg.body.job.deadline_ns = pg_job_budget_ns(job->release_ns, job->deadline_ns);
+                msg.body.job.finish_ns = job->finish_ns;
+                if (!policy_send(policy_coid, &msg, &decision)) { perror("PowerGuard job stream"); result = 1; break; }
+                last_bench_job = job->id;
+            }
+            if (result) break;
+        } else if (!last_bench_job) last_bench_job = bench.last_job_id;
         else if (bench.last_job_id > last_bench_job) {
             reported_job += bench.last_job_id - last_bench_job;
             memset(&msg, 0, sizeof(msg));
@@ -126,7 +163,21 @@ int main(void) {
             last_bench_job = bench.last_job_id;
         }
 
-        struct timespec pause = {.tv_nsec = PG_TICK};
+        if (bench.features & PG_FEATURE_ENFORCER) {
+            struct timespec progress;
+            if (clock_gettime(CLOCK_MONOTONIC, &progress)) { perror("manager progress clock"); result = 1; break; }
+            memset(&msg, 0, sizeof(msg));
+            msg.type = PG_MANAGER_HEARTBEAT; msg.version = PG_VERSION;
+            msg.body.manager.epoch = decision.decision.epoch;
+            msg.body.manager.sequence = ++progress_sequence;
+            msg.body.manager.progress_ns = (uint64_t)progress.tv_sec * UINT64_C(1000000000) + progress.tv_nsec;
+            if (!policy_send(policy_coid, &msg, &decision)) { perror("manager progress heartbeat"); result = 1; break; }
+        }
+        struct timespec pause = {.tv_nsec = 5 * PG_MS};
+        uint64_t tolerance = 1;
+        if (TimerTimeout(CLOCK_MONOTONIC, TIMER_TOLERANCE, NULL, &tolerance, NULL) == -1) {
+            perror("manager high resolution tolerance"); result = 1; break;
+        }
         while (running && nanosleep(&pause, &pause) == -1 && errno == EINTR) {}
     }
     name_close(bench_coid);

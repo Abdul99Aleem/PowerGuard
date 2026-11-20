@@ -48,16 +48,41 @@ INCLUDES += -Iinclude -Itestbench
 CCFLAGS_all += -std=gnu11
 
 CORE_OBJS = $(OUTPUT_DIR)/supervisor/policy.o $(OUTPUT_DIR)/supervisor/metrics.o
-SERVICE_OBJS = $(CORE_OBJS) $(OUTPUT_DIR)/src/PowerGuard.o
+THREADCTL_OBJ = $(OUTPUT_DIR)/platform/threadctl.o
+SERVICE_OBJS = $(CORE_OBJS) $(OUTPUT_DIR)/src/PowerGuard.o $(THREADCTL_OBJ)
 CONSOLE_OBJS = $(CORE_OBJS) $(OUTPUT_DIR)/tools/pg-console.o
 CHECK_OBJS = $(CORE_OBJS) $(OUTPUT_DIR)/tests/replay.o $(OUTPUT_DIR)/tests/metric_checks.o
-MANAGER_OBJS = $(OUTPUT_DIR)/manager/pg-manager.o
+MANAGER_OBJS = $(OUTPUT_DIR)/manager/pg-manager.o $(THREADCTL_OBJ)
 LED_OBJS = $(OUTPUT_DIR)/gpio/pg-state-leds.o
-OBJS = $(sort $(SERVICE_OBJS) $(CONSOLE_OBJS) $(CHECK_OBJS) $(MANAGER_OBJS) $(LED_OBJS))
+RUNTIME_OBJS = $(OUTPUT_DIR)/runtime/runtime.o $(OUTPUT_DIR)/runtime/worker.o $(THREADCTL_OBJ)
+THREADCTL_CHECK_OBJS = $(OUTPUT_DIR)/tests/threadctl_checks.o $(THREADCTL_OBJ)
+VALIDATE_OBJS = $(OUTPUT_DIR)/tools/pg-validate.o
+ENFORCER_OBJS = $(OUTPUT_DIR)/runtime/enforcer.o $(THREADCTL_OBJ)
+STALL_CHECK_OBJS = $(OUTPUT_DIR)/tools/pg-stall-check.o $(THREADCTL_OBJ)
+MANAGER_CHECK_OBJS = $(OUTPUT_DIR)/tests/manager_checks.o $(CORE_OBJS)
+OBJS = $(sort $(SERVICE_OBJS) $(CONSOLE_OBJS) $(CHECK_OBJS) $(MANAGER_OBJS) $(LED_OBJS) $(RUNTIME_OBJS) $(THREADCTL_CHECK_OBJS) $(VALIDATE_OBJS) $(ENFORCER_OBJS) $(STALL_CHECK_OBJS) $(MANAGER_CHECK_OBJS))
 
-all: $(TARGET) $(OUTPUT_DIR)/pg-console $(OUTPUT_DIR)/pg-check $(OUTPUT_DIR)/pg-manager $(OUTPUT_DIR)/pg-state-leds $(OUTPUT_DIR)/pg-thermal
+all: $(TARGET) $(OUTPUT_DIR)/pg-console $(OUTPUT_DIR)/pg-check $(OUTPUT_DIR)/pg-manager $(OUTPUT_DIR)/pg-state-leds $(OUTPUT_DIR)/pg-thermal $(OUTPUT_DIR)/pg-runtime $(OUTPUT_DIR)/pg-threadctl-check $(OUTPUT_DIR)/pg-validate $(OUTPUT_DIR)/pg-enforcer $(OUTPUT_DIR)/pg-stall-check $(OUTPUT_DIR)/pg-manager-check
 
-$(OUTPUT_DIR)/pg-thermal: $(OUTPUT_DIR)/telemetry/thermal.o $(OUTPUT_DIR)/supervisor/policy.o
+$(OUTPUT_DIR)/pg-enforcer: $(ENFORCER_OBJS)
+	$(LD) -o $@ $(LDFLAGS_all) $(LDFLAGS) $^ $(LIBS_all) $(LIBS)
+
+$(OUTPUT_DIR)/pg-stall-check: $(STALL_CHECK_OBJS)
+	$(LD) -o $@ $(LDFLAGS_all) $(LDFLAGS) $^ $(LIBS_all) $(LIBS)
+
+$(OUTPUT_DIR)/pg-manager-check: $(MANAGER_CHECK_OBJS)
+	$(LD) -o $@ $(LDFLAGS_all) $(LDFLAGS) $^ $(LIBS_all) $(LIBS)
+
+$(OUTPUT_DIR)/pg-validate: $(VALIDATE_OBJS)
+	$(LD) -o $@ $(LDFLAGS_all) $(LDFLAGS) $^ $(LIBS_all) $(LIBS)
+
+$(OUTPUT_DIR)/pg-runtime: $(RUNTIME_OBJS)
+	$(LD) -o $@ $(LDFLAGS_all) $(LDFLAGS) $^ $(LIBS_all) $(LIBS) -pthread
+
+$(OUTPUT_DIR)/pg-threadctl-check: $(THREADCTL_CHECK_OBJS)
+	$(LD) -o $@ $(LDFLAGS_all) $(LDFLAGS) $^ $(LIBS_all) $(LIBS) -pthread
+
+$(OUTPUT_DIR)/pg-thermal: $(OUTPUT_DIR)/telemetry/thermal.o $(OUTPUT_DIR)/supervisor/policy.o $(THREADCTL_OBJ)
 	$(LD) -o $@ $(LDFLAGS_all) $(LDFLAGS) $^ $(LIBS_all) $(LIBS) -lm
 
 $(OUTPUT_DIR)/%.o: %.c

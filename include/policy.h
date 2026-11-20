@@ -12,11 +12,12 @@
 #define PG_RECOVERY_MAX_GAP (35 * PG_MS)
 #define PG_FLAT_LIMIT (2000 * PG_MS)
 #define PG_LEASE (50 * PG_MS)
+#define PG_MANAGER_MAX_AGE (50 * PG_MS)
 #define PG_RESPONSE_TARGET (20 * PG_MS) /* experimental until frozen on Pi */
 
 enum pg_state { NORMAL, WARNING, THROTTLED, CRITICAL, RECOVERY };
 enum pg_reason { TEMP = 1, CPU = 2, POWER = 4, BAD_TEMP = 8, BAD_LOAD = 16,
-                 WAIT_EFFECT = 32 };
+                 WAIT_EFFECT = 32, BAD_MANAGER = 64 };
 /* GOOD asserts a verified acquisition. READ_ONLY has no conversion identity. */
 enum pg_quality { UNAVAILABLE, GOOD, FROZEN, SENSOR_ERROR, READ_ONLY };
 enum pg_source { REAL = 1, SIMULATED = 2 };
@@ -37,6 +38,8 @@ typedef struct {
     pg_sample sample;
     uint64_t manager_seen_ns;
     uint64_t healthy_since_ns, flat_since_ns, restriction_from_ns;
+    uint64_t manager_progress_ns, manager_progress_seq;
+    uint64_t restriction_decision_id, effect_received_id, effect_received_ns;
     unsigned recovery_origin;
     int have_sample, bad_sequence, explicit_power, power_value;
 } pg_policy;
@@ -51,4 +54,7 @@ uint64_t pg_next_deadline(const pg_policy *p);
 /* The manager sends this only after BOTH limits have taken effect. */
 int pg_effect(pg_policy *p, uint64_t epoch, uint64_t id, uint64_t effective,
               unsigned nc1, unsigned nc2, uint64_t now);
+/* Separate producer progress from the independent effect reporter's heartbeat. */
+int pg_manager_progress(pg_policy *, uint64_t epoch, uint64_t sequence,
+                        uint64_t progress_ns, uint64_t now);
 #endif

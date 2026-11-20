@@ -2,15 +2,17 @@
 #define PG_BENCH_PROTOCOL_H
 
 #include <stdint.h>
+#include "pg_threadctl.h"
+#include "pg_names.h"
 
 /*
  * Minimal local QNX name_attach/name_open + MsgSend contract.
  * A supervisor can send PG_CMD_LEVEL and PG_CMD_STATE messages.
  * All timestamps are CLOCK_MONOTONIC, all timing figures are measured.
  */
-#define PG_BENCH_NAME "powerguard_bench"
+#define PG_BENCH_NAME pg_bench_name()
 #define PG_BENCH_TYPE 0x2001u
-#define PG_BENCH_VERSION 2u
+#define PG_BENCH_VERSION 4u
 
 enum pg_command {
     PG_CMD_STATUS = 1,
@@ -21,7 +23,10 @@ enum pg_command {
     /* Exact NC1/NC2 caps.  This is used by pg-manager; PG_CMD_LEVEL remains
        available for the original manual demo CLI. */
     PG_CMD_CAPS = 6,
-    PG_CMD_LEASED_CAPS
+    PG_CMD_LEASED_CAPS,
+    PG_CMD_JOBS,
+    PG_CMD_WATCHDOG,
+    PG_CMD_ENFORCER
 };
 
 enum pg_scenario {
@@ -83,6 +88,29 @@ typedef struct {
     uint64_t last_job_finish_ns;
     uint64_t thermal_acquired_ns, cpu_window_end_ns;
     uint64_t applied_epoch, applied_decision_id;
+    uint32_t features, ready_mask, watchdog_ok, cpu_valid;
+    int32_t core_busy_pct[4];
+    pg_thread_report placement[5]; /* coordinator, critical, NC1, NC2, enforcer */
+    uint64_t worker_seen_ns[3], worker_effect_ns[2];
+    uint64_t first_job_id, job_overwrites, worker_dropped_reports;
+    uint64_t enforcer_seen_ns;
+    uint32_t enforcer_ok, reserved;
 } pg_status_t;
+
+#define PG_FEATURE_THREADCTL 1u
+#define PG_FEATURE_ENFORCER 2u
+typedef struct { pg_request_t request; pg_thread_report placement; } pg_enforcer_request;
+#define PG_JOB_BATCH 16u
+typedef struct { uint64_t id, release_ns, deadline_ns, finish_ns, start_ns; } pg_job_record;
+typedef struct {
+    pg_request_t request;
+    uint64_t after_id;
+} pg_jobs_request;
+typedef struct {
+    int32_t error;
+    uint32_t count;
+    uint64_t overwritten;
+    pg_job_record jobs[PG_JOB_BATCH];
+} pg_jobs_reply;
 
 #endif
