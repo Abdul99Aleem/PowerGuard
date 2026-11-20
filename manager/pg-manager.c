@@ -38,7 +38,8 @@ int main(void) {
     signal(SIGINT, stop);
     signal(SIGTERM, stop);
 
-    uint64_t last_acquired = 0, thermal_seq = 0, last_job = 0, last_decision = 0;
+    uint64_t last_acquired = 0, thermal_seq = 0, last_bench_job = 0;
+    uint64_t reported_job = 0, last_decision = 0;
     puts("pg-manager connected: telemetry, caps, effects, state and jobs are bridged");
     while (running) {
         pg_status_t bench;
@@ -68,16 +69,21 @@ int main(void) {
         pg_reply_v1 decision;
         if (!policy_send(policy_coid, &msg, &decision)) { perror("PowerGuard sample"); result = 1; break; }
 
-        if (bench.last_job_id && bench.last_job_id != last_job) {
+        /* The manager may attach after pgbench has already run jobs.  Treat
+           that first observed ID as a baseline; later source-ID jumps remain
+           visible as gaps in the supervisor scorecard. */
+        if (!last_bench_job) last_bench_job = bench.last_job_id;
+        else if (bench.last_job_id > last_bench_job) {
+            reported_job += bench.last_job_id - last_bench_job;
             memset(&msg, 0, sizeof(msg));
             msg.type = PG_JOB; msg.version = PG_VERSION;
             msg.body.job.epoch = decision.decision.epoch;
-            msg.body.job.id = bench.last_job_id;
+            msg.body.job.id = reported_job;
             msg.body.job.release_ns = bench.last_job_release_ns;
             msg.body.job.deadline_ns = bench.last_job_deadline_ns;
             msg.body.job.finish_ns = bench.last_job_finish_ns;
             if (!policy_send(policy_coid, &msg, &decision)) { perror("PowerGuard job"); result = 1; break; }
-            last_job = bench.last_job_id;
+            last_bench_job = bench.last_job_id;
         }
 
         const pg_status *want = &decision.decision;
