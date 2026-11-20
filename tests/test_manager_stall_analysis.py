@@ -1,3 +1,9 @@
+# POWERGUARD  /  TEAM SCHEDULIX
+# --------------------------------------------------------------------------
+# test_manager_stall_analysis.py
+# Original software (c) 2026 Abdul Aleem. MIT License.
+# Submission changes (c) 2026 Team Schedulix. See LICENSE for terms.
+
 import tempfile
 import unittest
 from pathlib import Path

@@ -1,5 +1,16 @@
-/* The supervisor owns the policy state. Clients on this board share its IPC layout. */
+/*
+ * POWERGUARD  /  TEAM SCHEDULIX
+ * --------------------------------------------------------------------------
+ * src/PowerGuard.c
+ *
+ * Original software (c) 2026 Abdul Aleem. MIT License.
+ * Submission changes (c) 2026 Team Schedulix. See LICENSE for terms.
+ */
+
 #include "ipc.h"
+#if defined(OVERHEAD_TRIAL)
+#include "overhead-shared.h"
+#endif
 #include "pg_threadctl.h"
 #include "pg_progress.h"
 #include <errno.h>
@@ -13,7 +24,8 @@
 #include <sys/trace.h>
 #include <time.h>
 
-static uint64_t monotonic_ns(void) {
+static uint64_t monotonic_ns(void)
+{
     struct timespec t;
     if (clock_gettime(CLOCK_MONOTONIC, &t) == -1) {
         perror("clock_gettime");
@@ -22,18 +34,23 @@ static uint64_t monotonic_ns(void) {
     return (uint64_t)t.tv_sec * UINT64_C(1000000000) + (uint64_t)t.tv_nsec;
 }
 
-/* Trace transitions between polls so a short-lived restriction is visible on the trace. */
-static void trace_change(const pg_status *before, const pg_status *after) {
-    if (before->decision_id != after->decision_id ||
-        before->state != after->state ||
-        before->causes != after->causes ||
-        before->effective_ns != after->effective_ns ||
+static void trace_change(const pg_status *before, const pg_status *after)
+{
+    if (before->decision_id != after->decision_id || before->state != after->state ||
+        before->causes != after->causes || before->effective_ns != after->effective_ns ||
         before->clear_since_ns != after->clear_since_ns) {
         (void)trace_logb(80, after, sizeof(*after));
     }
 }
 
-int main(int argc, char **argv) {
+int main(int argc, char **argv)
+{
+#if defined(OVERHEAD_TRIAL)
+    overhead_shared *slot = open_overhead(0);
+    if (slot == NULL) {
+        return 2;
+    }
+#endif
     char *end;
     if (argc != 2) {
         fprintf(stderr, "usage: PowerGuard FIFO_PRIORITY\n");
@@ -54,7 +71,9 @@ int main(int argc, char **argv) {
 
     pg_thread_report placement;
     if (priority >= 30 || pg_thread_configure(0, (int)priority, "pg-supervisor", &placement)) {
-        fputs("Supervisor requires verified CPU0 affinity and priority below critical priority 30\n", stderr);
+        fputs(
+            "Supervisor requires verified CPU0 affinity and priority below critical priority 30\n",
+            stderr);
         return 1;
     }
     pg_thread_print(&placement);
@@ -65,9 +84,11 @@ int main(int argc, char **argv) {
         return 1;
     }
     pg_progress *progress = pg_progress_open(0);
-    if (!progress) { perror("workload progress mapping (start workloads first)"); return 1; }
+    if (!progress) {
+        perror("workload progress mapping (start workloads first)");
+        return 1;
+    }
 
-    /* Keep checking sample age even when clients stop sending messages. */
     int coid = ConnectAttach(0, 0, server->chid, _NTO_SIDE_CHANNEL, 0);
     if (coid == -1) {
         perror("ConnectAttach");
@@ -94,18 +115,19 @@ int main(int argc, char **argv) {
         uint64_t heartbeat = monotonic_ns();
         pg_progress_publish(progress, policy.status.epoch, heartbeat);
         uint64_t next = pg_next_deadline(&policy);
-        if (!next || next > heartbeat + 100 * PG_MS) next = heartbeat + 100 * PG_MS;
+        if (!next || next > heartbeat + 100 * PG_MS) {
+            next = heartbeat + 100 * PG_MS;
+        }
         if (next != armed_ns) {
-            struct itimerspec expiry = {
-                .it_value = {.tv_sec = next / UINT64_C(1000000000),
-                             .tv_nsec = next % UINT64_C(1000000000)}
-            };
+            struct itimerspec expiry = {.it_value = {.tv_sec = next / UINT64_C(1000000000),
+                                                     .tv_nsec = next % UINT64_C(1000000000)}};
             if (timer_settime(timer, TIMER_ABSTIME, &expiry, NULL) == -1) {
                 perror("arm policy deadline");
                 return 1;
             }
             armed_ns = next;
         }
+
         union {
             struct _pulse pulse;
             pg_message_v1 message;
@@ -123,21 +145,37 @@ int main(int argc, char **argv) {
         uint64_t now = monotonic_ns();
         pg_status before = policy.status;
         uint64_t forced = pg_progress_forced(progress);
-        if (forced && !policy.forced_off_ns) policy.forced_off_ns = forced;
-        if (forced) pg_tick(&policy, now);
+        if (forced && !policy.forced_off_ns) {
+            policy.forced_off_ns = forced;
+        }
+        if (forced) {
+            pg_tick(&policy, now);
+        }
         if (rcvid == 0) {
             if (in.pulse.code == _PULSE_CODE_MINAVAIL) {
                 armed_ns = 0;
                 pg_tick(&policy, now);
             }
+#if defined(OVERHEAD_TRIAL)
+            if (in.pulse.code == SENSOR_PULSE) {
+                pthread_mutex_lock(&slot->lock);
+                pg_sample sample = slot->sample;
+                pthread_mutex_unlock(&slot->lock);
+                pg_ingest(&policy, &sample, monotonic_ns());
+                ++slot->received;
+            }
+#endif
             pg_observe(&metrics, &before, &policy);
             trace_change(&before, &policy.status);
-            if (in.pulse.code == _PULSE_CODE_DISCONNECT)
+            if (in.pulse.code == _PULSE_CODE_DISCONNECT) {
                 ConnectDetach(in.pulse.scoid);
+            }
             if (in.pulse.code == _PULSE_CODE_UNBLOCK) {
                 struct _msg_info pending;
                 if (MsgInfo(in.pulse.value.sival_int, &pending) != -1 &&
-                    (pending.flags & _NTO_MI_UNBLOCK_REQ)) MsgError(in.pulse.value.sival_int, -1);
+                    (pending.flags & _NTO_MI_UNBLOCK_REQ)) {
+                    MsgError(in.pulse.value.sival_int, -1);
+                }
             }
             continue;
         }
@@ -169,107 +207,106 @@ int main(int argc, char **argv) {
         }
 
         switch (msg->type) {
-        case PG_SAMPLE:
-            pg_ingest(&policy, &msg->body.sample, now);
-            break;
+            case PG_SAMPLE:
+                pg_ingest(&policy, &msg->body.sample, now);
+                break;
 
-        case PG_SAMPLE_POWER:
-            pg_ingest_power(&policy, &msg->body.sample,
-                            msg->reserved <= 100 ? (int)msg->reserved : -1, now);
-            break;
+            case PG_SAMPLE_POWER:
+                pg_ingest_power(&policy, &msg->body.sample,
+                                msg->reserved <= 100 ? (int)msg->reserved : -1, now);
+                break;
 
-        case PG_JOB:
-            if (msg->body.job.epoch != policy.status.epoch ||
-                !pg_job(&metrics, msg->body.job.id, msg->body.job.release_ns,
-                        msg->body.job.deadline_ns, msg->body.job.finish_ns, now)) {
-                MsgError(rcvid, EINVAL);
+            case PG_JOB:
+                if (msg->body.job.epoch != policy.status.epoch ||
+                    !pg_job(&metrics, msg->body.job.id, msg->body.job.release_ns,
+                            msg->body.job.deadline_ns, msg->body.job.finish_ns, now)) {
+                    MsgError(rcvid, EINVAL);
+                    continue;
+                }
+                pg_tick(&policy, now);
+                break;
+
+            case PG_TRIAL:
+                if (msg->body.trial.epoch != policy.status.epoch ||
+                    policy.status.state != msg->body.trial.from ||
+                    !pg_trial(&metrics, msg->body.trial.series, msg->body.trial.from,
+                              msg->body.trial.to, msg->body.trial.trigger_ns, now)) {
+                    MsgError(rcvid, EINVAL);
+                    continue;
+                }
+                pg_tick(&policy, now);
+                break;
+
+            case PG_SCORE:
+                if (!msg->body.trial.series || msg->body.trial.series > PG_CASES ||
+                    msg->body.trial.from > RECOVERY || msg->body.trial.to > RECOVERY) {
+                    MsgError(rcvid, EINVAL);
+                    continue;
+                }
+                pg_tick(&policy, now);
+                break;
+
+            case PG_MANAGER_HEARTBEAT:
+                if (!pg_manager_progress(&policy, msg->body.manager.epoch,
+                                         msg->body.manager.sequence, msg->body.manager.progress_ns,
+                                         now)) {
+                    MsgError(rcvid, EINVAL);
+                    continue;
+                }
+                break;
+
+            case PG_EFFECT:
+            case PG_EFFECT_CONFIRMED:
+
+                pg_tick(&policy, now);
+                if (!pg_effect(&policy, msg->body.effect.epoch, msg->body.effect.decision_id,
+                               msg->body.effect.effective_ns, msg->body.effect.nc1_pct,
+                               msg->body.effect.nc2_pct, now)) {
+                    pg_observe(&metrics, &before, &policy);
+                    trace_change(&before, &policy.status);
+                    MsgError(rcvid, EINVAL);
+                    continue;
+                }
+                break;
+
+            case PG_READ:
+            case PG_CONFIRM_READ:
+                pg_tick(&policy, now);
+                break;
+
+            default:
+                MsgError(rcvid, ENOSYS);
                 continue;
-            }
-            pg_tick(&policy, now);
-            break;
-
-        case PG_TRIAL:
-            if (msg->body.trial.epoch != policy.status.epoch ||
-                policy.status.state != msg->body.trial.from ||
-                !pg_trial(&metrics, msg->body.trial.series, msg->body.trial.from,
-                          msg->body.trial.to, msg->body.trial.trigger_ns, now)) {
-                MsgError(rcvid, EINVAL);
-                continue;
-            }
-            pg_tick(&policy, now);
-            break;
-
-        case PG_SCORE:
-            if (!msg->body.trial.series || msg->body.trial.series > PG_CASES ||
-                msg->body.trial.from > RECOVERY || msg->body.trial.to > RECOVERY) {
-                MsgError(rcvid, EINVAL);
-                continue;
-            }
-            pg_tick(&policy, now);
-            break;
-
-        case PG_MANAGER_HEARTBEAT:
-            if (!pg_manager_progress(&policy, msg->body.manager.epoch, msg->body.manager.sequence,
-                                     msg->body.manager.progress_ns, now)) {
-                MsgError(rcvid, EINVAL);
-                continue;
-            }
-            break;
-
-        case PG_EFFECT:
-        case PG_EFFECT_CONFIRMED:
-            /* A cap acknowledgement can arrive after its lease has expired. */
-            pg_tick(&policy, now);
-            if (!pg_effect(&policy, msg->body.effect.epoch, msg->body.effect.decision_id,
-                           msg->body.effect.effective_ns, msg->body.effect.nc1_pct,
-                           msg->body.effect.nc2_pct, now)) {
-                pg_observe(&metrics, &before, &policy);
-                trace_change(&before, &policy.status);
-                MsgError(rcvid, EINVAL);
-                continue;
-            }
-            break;
-
-        case PG_READ:
-        case PG_CONFIRM_READ:
-            pg_tick(&policy, now);
-            break;
-
-        default:
-            MsgError(rcvid, ENOSYS);
-            continue;
         }
         pg_observe(&metrics, &before, &policy);
         trace_change(&before, &policy.status);
-        pg_reply_v1 reply = {
-            .version = PG_VERSION,
-            .config_generation = 1,
-            .decision = policy.status,
-            .last_input = policy.sample
-        };
+        pg_reply_v1 reply = {.version = PG_VERSION,
+                             .config_generation = 1,
+                             .decision = policy.status,
+                             .last_input = policy.sample};
         if (msg->type == PG_EFFECT_CONFIRMED || msg->type == PG_CONFIRM_READ) {
             pg_confirmation_reply receipt = {
                 .snapshot = reply,
-                .detected_ns = policy.restriction_decision_id == policy.status.decision_id ?
-                               policy.restriction_from_ns : policy.status.issued_ns,
-                .received_ns = policy.effect_received_id == policy.status.decision_id ? policy.effect_received_ns : 0,
+                .detected_ns = policy.restriction_decision_id == policy.status.decision_id
+                                   ? policy.restriction_from_ns
+                                   : policy.status.issued_ns,
+                .received_ns = policy.effect_received_id == policy.status.decision_id
+                                   ? policy.effect_received_ns
+                                   : 0,
                 .manager_progress_ns = policy.manager_progress_ns,
                 .manager_progress_seq = policy.manager_progress_seq,
-                .restriction = policy.restriction_decision_id == policy.status.decision_id
-            };
+                .restriction = policy.restriction_decision_id == policy.status.decision_id};
             MsgReply(rcvid, EOK, &receipt, sizeof(receipt));
         } else if (msg->type == PG_SCORE) {
             unsigned series = msg->body.trial.series;
             unsigned from = msg->body.trial.from;
             unsigned to = msg->body.trial.to;
-            pg_score_reply report = {
-                .snapshot = reply,
-                .scores = metrics.scores,
-                .jitter = metrics.trials[series - 1][from][to],
-                .series = series,
-                .from = from,
-                .to = to
-            };
+            pg_score_reply report = {.snapshot = reply,
+                                     .scores = metrics.scores,
+                                     .jitter = metrics.trials[series - 1][from][to],
+                                     .series = series,
+                                     .from = from,
+                                     .to = to};
             MsgReply(rcvid, EOK, &report, sizeof(report));
         } else {
             MsgReply(rcvid, EOK, &reply, sizeof(reply));

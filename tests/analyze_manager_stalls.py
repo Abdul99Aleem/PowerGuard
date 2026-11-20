@@ -1,3 +1,9 @@
+# POWERGUARD  /  TEAM SCHEDULIX
+# --------------------------------------------------------------------------
+# analyze_manager_stalls.py
+# Original software (c) 2026 Abdul Aleem. MIT License.
+# Submission changes (c) 2026 Team Schedulix. See LICENSE for terms.
+
 """Audit timestamped manager-stall confirmations, including their actual origin."""
 import argparse
 import json

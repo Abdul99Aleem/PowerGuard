@@ -9,6 +9,8 @@ presentation sequence, commands and evidence locations. Submission scope is fixe
 
 > **Project status:** The QNX 8 ThreadCtl runtime retains its independent enforcer and integrates teammate-3's workload and benchmark improvements. Pi tests cover 30 manager stalls, ten manager restarts, and a persistent supervisor-watchdog latch. See the [integration report](docs/teammate3-merge-validation.md) and [current checklist](docs/threadctl-checklist.md) for measured scopes, retained fault results and remaining real-thermal/LED qualification.
 
+[Source and function guide](docs/source-guide.md)
+
 ## Project goal
 
 PowerGuard is a mixed-criticality resource supervisor for **one Raspberry Pi 4 or 5 running QNX**. It protects one periodic critical-control workload while managing two lower-criticality workloads (NC1 and NC2) in response to CPU, temperature, estimated-power and sensor-integrity conditions.

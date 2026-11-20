@@ -1,5 +1,9 @@
-# Launch from Windows PowerShell: powershell -ExecutionPolicy Bypass -File .\PowerGuard-Remote.ps1
-# Authenticates interactively with SSH/SCP; does NOT save or pass the root password on the command line.
+# POWERGUARD  /  TEAM SCHEDULIX
+# --------------------------------------------------------------------------
+# PowerGuard-Remote.ps1
+# Original software (c) 2026 Abdul Aleem. MIT License.
+# Submission changes (c) 2026 Team Schedulix. See LICENSE for terms.
+
 param(
     [string]$BoardIP = '10.78.56.80',
     [string]$User = 'root'

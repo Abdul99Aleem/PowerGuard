@@ -1,6 +1,10 @@
 #!/bin/sh
-# Run beside the newly staged binaries. Only processes started here are stopped.
-# Explicit idle TIDs are validated against procfs before any worker is enabled.
+# POWERGUARD  /  TEAM SCHEDULIX
+# --------------------------------------------------------------------------
+# validate-threadctl.sh
+# Original software (c) 2026 Abdul Aleem. MIT License.
+# Submission changes (c) 2026 Team Schedulix. See LICENSE for terms.
+
 set -eu
 if [ "$#" -ne 4 ]; then
     echo 'usage: sh validate-threadctl.sh IDLE_TID_CPU0 IDLE_TID_CPU1 IDLE_TID_CPU2 IDLE_TID_CPU3' >&2

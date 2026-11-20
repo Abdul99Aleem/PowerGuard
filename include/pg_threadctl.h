@@ -1,12 +1,33 @@
+/*
+ * POWERGUARD  /  TEAM SCHEDULIX
+ * --------------------------------------------------------------------------
+ * include/pg_threadctl.h
+ *
+ * Original software (c) 2026 Abdul Aleem. MIT License.
+ * Submission changes (c) 2026 Team Schedulix. See LICENSE for terms.
+ */
+
 #ifndef PG_THREADCTL_H
 #define PG_THREADCTL_H
 #include <stdint.h>
+
 typedef struct {
-    int32_t pid, tid, cpu, priority, policy, error;
-    uint64_t runmask, inherit_mask;
+    int32_t pid;
+    int32_t tid;
+    int32_t cpu;
+    int32_t priority;
+    int32_t policy;
+    int32_t error;
+    uint64_t runmask;
+    uint64_t inherit_mask;
     char name[32];
 } pg_thread_report;
-typedef struct { uint64_t runmask, inherit_mask; } pg_thread_masks;
+
+typedef struct {
+    uint64_t runmask;
+    uint64_t inherit_mask;
+} pg_thread_masks;
+
 int pg_thread_masks_get(pg_thread_masks *out);
 int pg_thread_masks_set(uint64_t runmask, uint64_t inherit_mask);
 int pg_thread_configure(unsigned cpu, int priority, const char *name, pg_thread_report *out);

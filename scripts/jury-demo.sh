@@ -1,5 +1,10 @@
 #!/bin/sh
-# Presentation wrapper only: thresholds, scheduling and enforcement are unchanged.
+# POWERGUARD  /  TEAM SCHEDULIX
+# --------------------------------------------------------------------------
+# jury-demo.sh
+# Original software (c) 2026 Abdul Aleem. MIT License.
+# Submission changes (c) 2026 Team Schedulix. See LICENSE for terms.
+
 set -u
 if [ "$#" -ne 4 ]; then
     echo 'On the Pi: sh jury-demo.sh IDLE_TID_CPU0 IDLE_TID_CPU1 IDLE_TID_CPU2 IDLE_TID_CPU3' >&2

@@ -1,5 +1,10 @@
 #!/bin/sh
-# Negative legacy admission test: no policy epoch ever qualifies this run.
+# POWERGUARD  /  TEAM SCHEDULIX
+# --------------------------------------------------------------------------
+# validate-startup-latch.sh
+# Original software (c) 2026 Abdul Aleem. MIT License.
+# Submission changes (c) 2026 Team Schedulix. See LICENSE for terms.
+
 set -eu
 cd "$(dirname "$0")"
 export PG_INSTANCE="startup_latch_$$"

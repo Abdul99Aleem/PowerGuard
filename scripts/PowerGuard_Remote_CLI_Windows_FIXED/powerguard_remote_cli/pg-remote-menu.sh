@@ -1,6 +1,10 @@
 #!/bin/sh
-# PowerGuard QNX remote menu; run from a real interactive SSH session.
-# This driver NEVER sets a desired supervisor state or claims a scored target run.
+# POWERGUARD  /  TEAM SCHEDULIX
+# --------------------------------------------------------------------------
+# pg-remote-menu.sh
+# Original software (c) 2026 Abdul Aleem. MIT License.
+# Submission changes (c) 2026 Team Schedulix. See LICENSE for terms.
+
 PATH=/proc/boot:/bin:/usr/bin:/usr/sbin:/sbin:/tmp:$PATH
 cd /tmp || exit 1
 

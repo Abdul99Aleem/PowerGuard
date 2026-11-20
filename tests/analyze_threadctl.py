@@ -1,3 +1,9 @@
+# POWERGUARD  /  TEAM SCHEDULIX
+# --------------------------------------------------------------------------
+# analyze_threadctl.py
+# Original software (c) 2026 Abdul Aleem. MIT License.
+# Submission changes (c) 2026 Team Schedulix. See LICENSE for terms.
+
 """Validate captured critical jobs and report distributions without hiding gaps."""
 import argparse
 import csv
