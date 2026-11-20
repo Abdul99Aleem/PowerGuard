@@ -15,6 +15,7 @@
 #include <sys/neutrino.h>
 #include <sys/dispatch.h>
 #include <sys/iomsg.h>
+#include <sys/select.h>
 
 #define NS 1000000000ULL
 #define PERIOD_NS 20000000ULL  /* 20 ms periodic critical job */
@@ -288,21 +289,31 @@ static void dashboard(int coid) {
     raw.c_lflag &= (tcflag_t)~(ICANON | ECHO);
     raw.c_cc[VMIN] = 1; raw.c_cc[VTIME] = 0;
     if (tcsetattr(STDIN_FILENO, TCSANOW, &raw) == -1) { perror("tcsetattr"); return; }
-    int selected = PG_SC_NORMAL;
+    int selected = -1;
     for (;;) {
         pg_status_t reply;
         if (!dashboard_send(coid, PG_CMD_STATUS, 0, &reply)) break;
-        printf("\033[2J\033[HPOWERGUARD LIVE DASHBOARD\nUp/Down: choose scenario | Enter: apply | q: quit\n\n");
+        if (selected < 0) selected = reply.scenario;
+        printf("\033[2J\033[HPOWERGUARD LIVE DASHBOARD\nUp/Down: change active scenario | q: quit\n\n");
         print_status(&reply);
-        printf("\nSelected scenario: %s%s\n", names[selected], selected == reply.scenario ? " (active)" : "");
+        printf("\nActive scenario: %s\n", names[reply.scenario]);
         fflush(stdout);
+        fd_set ready;
+        FD_ZERO(&ready); FD_SET(STDIN_FILENO, &ready);
+        struct timeval refresh = {.tv_sec = 0, .tv_usec = 500000};
+        int available = select(STDIN_FILENO + 1, &ready, NULL, NULL, &refresh);
+        if (available < 0) { if (errno == EINTR) continue; perror("select"); break; }
+        if (available == 0) continue; /* Automatic status refresh twice per second. */
         int c = getchar();
         if (c == 'q' || c == 'Q') break;
+        int next = selected;
         if (c == 27 && getchar() == '[') {
             c = getchar();
-            if (c == 'A' && selected < PG_SC_FREEZE) ++selected;
-            else if (c == 'B' && selected > PG_SC_NORMAL) --selected;
-        } else if (c == '\r' || c == '\n') {
+            if (c == 'A' && selected < PG_SC_FREEZE) ++next;
+            else if (c == 'B' && selected > PG_SC_NORMAL) --next;
+        }
+        if (next != selected) {
+            selected = next;
             (void)dashboard_send(coid, PG_CMD_SCENARIO, selected, &reply);
         }
     }
