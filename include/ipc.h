@@ -4,7 +4,13 @@
 
 #define PG_NAME "powerguard_k_v1"
 #define PG_VERSION 1
-enum pg_message { PG_READ = 0x700, PG_SAMPLE, PG_EFFECT, PG_SAMPLE_POWER, PG_JOB, PG_TRIAL, PG_SCORE };
+enum pg_message { PG_READ = 0x700, PG_SAMPLE, PG_EFFECT, PG_SAMPLE_POWER, PG_JOB, PG_TRIAL, PG_SCORE, PG_SAMPLE_BATCH };
+#define PG_BATCH_MAX 8
+typedef struct {
+    uint16_t type, version;
+    uint32_t count;
+    pg_sample samples[PG_BATCH_MAX];
+} pg_sample_batch;
 typedef struct {
     uint16_t type, version;
     uint32_t reserved;

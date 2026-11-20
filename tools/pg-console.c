@@ -74,7 +74,15 @@ static void display(const bench *b, const pg_status *before) {
     if (in->acquired_ns && in->acquired_ns <= s->as_of_ns)
         printf("%.1f ms",ms(s->as_of_ns-in->acquired_ns));
     else printf("unknown");
-    printf("  CPU=%u%%  power=%u  NC1=%u%% NC2=%u%%  decision=%llu %s",
+    int total=0;
+    for (int i=0;i<4;++i) {
+        int core=in->core_busy_pct[i];
+        if (core<0 || core>100) { total=-1; break; }
+        total+=core;
+    }
+    if (in->load_end_ns && total>=0) printf("  CPU-mean=%.2f%%",total/4.);
+    else printf("  CPU-mean=unknown");
+    printf("  CPU-peak=%u%%  power-index=%u  NC1=%u%% NC2=%u%%  decision=%llu %s",
            s->cpu_peak_pct,s->power_index,s->nc1_pct,s->nc2_pct,
            (unsigned long long)s->decision_id,s->effective_ns ? "effective" : "awaiting effect");
     if (s->causes & TEMP) printf(" heat");

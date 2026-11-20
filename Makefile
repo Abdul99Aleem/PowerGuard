@@ -55,7 +55,10 @@ MANAGER_OBJS = $(OUTPUT_DIR)/manager/pg-manager.o
 LED_OBJS = $(OUTPUT_DIR)/gpio/pg-state-leds.o
 OBJS = $(sort $(SERVICE_OBJS) $(CONSOLE_OBJS) $(CHECK_OBJS) $(MANAGER_OBJS) $(LED_OBJS))
 
-all: $(TARGET) $(OUTPUT_DIR)/pg-console $(OUTPUT_DIR)/pg-check $(OUTPUT_DIR)/pg-manager $(OUTPUT_DIR)/pg-state-leds
+all: $(TARGET) $(OUTPUT_DIR)/pg-console $(OUTPUT_DIR)/pg-check $(OUTPUT_DIR)/pg-manager $(OUTPUT_DIR)/pg-state-leds $(OUTPUT_DIR)/pg-thermal
+
+$(OUTPUT_DIR)/pg-thermal: $(OUTPUT_DIR)/telemetry/thermal.o $(OUTPUT_DIR)/supervisor/policy.o
+	$(LD) -o $@ $(LDFLAGS_all) $(LDFLAGS) $^ $(LIBS_all) $(LIBS) -lm
 
 $(OUTPUT_DIR)/%.o: %.c
 	@mkdir -p $(dir $@)
@@ -83,3 +86,4 @@ rebuild: clean all
 
 #Inclusion of dependencies (object files to source and includes)
 -include $(OBJS:%.o=%.d)
+-include $(OUTPUT_DIR)/telemetry/thermal.d

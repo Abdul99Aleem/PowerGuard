@@ -25,10 +25,13 @@ int pg_activation_limit(unsigned signal, int value) {
     return value >= l.warn ? l.warn : -1;
 }
 
+int pg_clear_values(int temp, int peak, int demand) {
+    return temp <= thermal.clear && peak <= cpu.clear && demand <= power.clear;
+}
+
 int pg_recovery_ready(const pg_policy *p) {
-    return p->status.causes == 0 && p->sample.temp_deci_c <= thermal.clear &&
-           p->status.cpu_peak_pct <= (unsigned)cpu.clear &&
-           p->status.power_index <= (unsigned)power.clear;
+    return p->status.causes == 0 && pg_clear_values(p->sample.temp_deci_c,
+           p->status.cpu_peak_pct, p->status.power_index);
 }
 
 static void set_stage(pg_status *s, unsigned stage, uint64_t now) {

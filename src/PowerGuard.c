@@ -65,7 +65,7 @@ int main(int argc, char **argv) {
             }
             armed_ns = next;
         }
-        union { struct _pulse pulse; pg_message_v1 message; } in;
+        union { struct _pulse pulse; pg_message_v1 message; pg_sample_batch batch; } in;
         struct _msg_info info;
         rcvid_t id = MsgReceive(server->chid, &in, sizeof(in), &info);
         if (id == -1) { if (errno == EINTR) continue; perror("MsgReceive"); return 1; }
@@ -82,6 +82,22 @@ int main(int argc, char **argv) {
             continue;
         }
         pg_message_v1 *m = &in.message;
+        if (info.msglen >= (ssize_t)sizeof(m->type) && m->type == PG_SAMPLE_BATCH) {
+            pg_sample_batch *b = &in.batch;
+            if (info.srcmsglen != sizeof(*b) || info.msglen != sizeof(*b) ||
+                b->version != PG_VERSION || !b->count || b->count > PG_BATCH_MAX) {
+                MsgError(id, EINVAL);
+                continue;
+            }
+            for (unsigned i = 0; i < b->count; ++i) {
+                before = policy.status;
+                pg_ingest(&policy, &b->samples[i], now);
+                pg_observe(&metrics, &before, &policy);
+                trace_change(&before, &policy.status);
+            }
+            MsgReply(id, EOK, &now, sizeof(now));
+            continue;
+        }
         if (info.msglen >= (ssize_t)sizeof(m->type) && m->type == _IO_CONNECT) {
             MsgReply(id, EOK, NULL, 0); continue;
         }

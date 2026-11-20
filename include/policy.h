@@ -44,6 +44,7 @@ void pg_init(pg_policy *p, uint64_t now);
 void pg_ingest(pg_policy *p, const pg_sample *s, uint64_t now);
 void pg_ingest_power(pg_policy *, const pg_sample *, int power_index, uint64_t now);
 int pg_activation_limit(unsigned signal, int value);
+int pg_clear_values(int temp, int peak, int demand);
 int pg_recovery_ready(const pg_policy *);
 void pg_tick(pg_policy *p, uint64_t now);
 uint64_t pg_next_deadline(const pg_policy *p);
