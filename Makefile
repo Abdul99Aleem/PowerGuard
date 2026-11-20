@@ -52,9 +52,10 @@ SERVICE_OBJS = $(CORE_OBJS) $(OUTPUT_DIR)/src/PowerGuard.o
 CONSOLE_OBJS = $(CORE_OBJS) $(OUTPUT_DIR)/tools/pg-console.o
 CHECK_OBJS = $(CORE_OBJS) $(OUTPUT_DIR)/tests/replay.o $(OUTPUT_DIR)/tests/metric_checks.o
 MANAGER_OBJS = $(OUTPUT_DIR)/manager/pg-manager.o
-OBJS = $(sort $(SERVICE_OBJS) $(CONSOLE_OBJS) $(CHECK_OBJS) $(MANAGER_OBJS))
+LED_OBJS = $(OUTPUT_DIR)/gpio/pg-state-leds.o
+OBJS = $(sort $(SERVICE_OBJS) $(CONSOLE_OBJS) $(CHECK_OBJS) $(MANAGER_OBJS) $(LED_OBJS))
 
-all: $(TARGET) $(OUTPUT_DIR)/pg-console $(OUTPUT_DIR)/pg-check $(OUTPUT_DIR)/pg-manager
+all: $(TARGET) $(OUTPUT_DIR)/pg-console $(OUTPUT_DIR)/pg-check $(OUTPUT_DIR)/pg-manager $(OUTPUT_DIR)/pg-state-leds
 
 $(OUTPUT_DIR)/%.o: %.c
 	@mkdir -p $(dir $@)
@@ -70,6 +71,9 @@ $(OUTPUT_DIR)/pg-check: $(CHECK_OBJS)
 	$(LD) -o $@ $(LDFLAGS_all) $(LDFLAGS) $^ $(LIBS_all) $(LIBS)
 
 $(OUTPUT_DIR)/pg-manager: $(MANAGER_OBJS)
+	$(LD) -o $@ $(LDFLAGS_all) $(LDFLAGS) $^ $(LIBS_all) $(LIBS)
+
+$(OUTPUT_DIR)/pg-state-leds: $(LED_OBJS)
 	$(LD) -o $@ $(LDFLAGS_all) $(LDFLAGS) $^ $(LIBS_all) $(LIBS)
 
 clean:
