@@ -239,7 +239,11 @@ static void evaluate(pg_policy *p, uint64_t now, unsigned causes, uint64_t detec
         causes |= BAD_MANAGER;
         detected = earlier(detected, p->manager_progress_ns + PG_MANAGER_MAX_AGE);
     }
-    if (causes & (BAD_TEMP | BAD_LOAD | BAD_MANAGER)) required = 4;
+    if (p->forced_off_ns) {
+        causes |= FORCED_OFF;
+        detected = earlier(detected, p->forced_off_ns);
+    }
+    if (causes & (BAD_TEMP | BAD_LOAD | BAD_MANAGER | FORCED_OFF)) required = 4;
     /* Score from the qualifying measurement or its expiry, including IPC delay. */
     if (p->have_sample) {
         if (bands[0] == required && bands[0] >= NC2_OFF && !(causes & BAD_TEMP))

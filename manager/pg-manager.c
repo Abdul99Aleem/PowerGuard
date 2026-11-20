@@ -36,8 +36,32 @@ static int policy_send(int coid, const pg_message_v1 *request, pg_reply_v1 *repl
     return timed_send(coid, request, sizeof(*request), reply, sizeof(*reply));
 }
 
+/* Source job IDs and progress sequences survive a manager restart. Reading the
+ * accepted cursor also handles a previous PG_JOB whose reply was lost. Never
+ * renumber releases or replay records already accepted by this policy epoch. */
+static int resume_cursor(int coid, uint64_t *epoch, uint64_t *job, uint64_t *sequence) {
+    pg_message_v1 q = {.type = PG_SCORE, .version = PG_VERSION};
+    q.body.trial.series = 1; q.body.trial.from = NORMAL; q.body.trial.to = WARNING;
+    pg_score_reply score;
+    pg_confirmation_reply progress;
+    if (!timed_send(coid, &q, sizeof(q), &score, sizeof(score))) return 0;
+    q.type = PG_CONFIRM_READ;
+    if (!timed_send(coid, &q, sizeof(q), &progress, sizeof(progress))) return 0;
+    if (score.snapshot.version != PG_VERSION || progress.snapshot.version != PG_VERSION ||
+        score.snapshot.decision.epoch != progress.snapshot.decision.epoch) {
+        errno = EPROTO; return 0;
+    }
+    *epoch = score.snapshot.decision.epoch;
+    *job = score.scores.last_job_id;
+    *sequence = progress.manager_progress_seq;
+    return 1;
+}
+
 static int bounded(int value) {
     return value < 0 ? 0 : value > 100 ? 100 : value;
+}
+static int retry_policy(void) {
+    return running && (errno == ETIMEDOUT || errno == EINTR);
 }
 
 int main(void) {
@@ -54,11 +78,15 @@ int main(void) {
     signal(SIGINT, stop);
     signal(SIGTERM, stop);
 
-    uint64_t last_bench_job = 0, reported_job = 0;
-    uint64_t progress_sequence = 0;
+    uint64_t last_bench_job = 0, policy_epoch = 0, progress_sequence = 0;
+    if (!resume_cursor(policy_coid, &policy_epoch, &last_bench_job, &progress_sequence)) {
+        perror("manager accepted cursor"); return 1;
+    }
     int last_state = PG_ST_UNKNOWN, last_recovery = -1;
+    int need_resume = 0;
     puts("pg-manager connected: telemetry/jobs/progress; split runtime uses independent enforcement");
     while (running) {
+        int waiting_for_critical = 0;
         pg_status_t bench;
         if (!bench_send(bench_coid, PG_CMD_STATUS, 0, 0, &bench)) { perror("pgbench status"); result = 1; break; }
         int split_runtime = (bench.features & PG_FEATURE_THREADCTL) != 0;
@@ -84,7 +112,22 @@ int main(void) {
         msg.version = PG_VERSION;
         msg.body.sample = sample;
         pg_reply_v1 decision;
-        if (!policy_send(policy_coid, &msg, &decision)) { perror("PowerGuard sample"); result = 1; break; }
+        if (!policy_send(policy_coid, &msg, &decision)) {
+            if (retry_policy()) { need_resume = 1; goto pause_loop; }
+            perror("PowerGuard sample"); result = 1; break;
+        }
+
+        if (need_resume || decision.decision.epoch != policy_epoch) {
+            if (!resume_cursor(policy_coid, &policy_epoch, &last_bench_job, &progress_sequence)) {
+                if (retry_policy()) { need_resume = 1; goto pause_loop; }
+                perror("manager new-epoch cursor"); result = 1; break;
+            }
+            need_resume = 0;
+        }
+        if (last_bench_job > bench.last_job_id) {
+            fputs("Workload release IDs restarted without a new run; qualification failed\n", stderr);
+            result = 1; break;
+        }
 
         if (!(bench.features & PG_FEATURE_ENFORCER)) {
         const pg_status *want = &decision.decision;
@@ -108,9 +151,11 @@ int main(void) {
             last_state = state;
             last_recovery = recovery;
         }
-        if (grant_accepted && bench.applied_epoch == want->epoch && bench.applied_decision_id == want->decision_id &&
+        int caps_applied = grant_accepted && bench.applied_epoch == want->epoch && bench.applied_decision_id == want->decision_id &&
             bench.nc1_cap_pct == (int)want->nc1_pct && bench.nc2_cap_pct == (int)want->nc2_pct &&
-            bench.last_effective_ns >= want->issued_ns) {
+            bench.last_effective_ns >= want->issued_ns;
+        waiting_for_critical = grant_accepted && want->state == CRITICAL && !caps_applied;
+        if (caps_applied) {
             memset(&msg, 0, sizeof(msg));
             msg.type = PG_EFFECT; msg.version = PG_VERSION;
             msg.body.effect.epoch = want->epoch;
@@ -121,9 +166,8 @@ int main(void) {
             if (!policy_send(policy_coid, &msg, &decision) && errno != EINVAL) { perror("PowerGuard effect"); result = 1; break; }
         }
         }
-        /* The manager may attach after pgbench has already run jobs.  Treat
-           that first observed ID as a baseline; later source-ID jumps remain
-           visible as gaps in the supervisor scorecard. */
+        /* Split runtime supplies every release. The legacy bench exposes only
+         * its latest record: missing source IDs stay visible in that score. */
         if (split_runtime) {
             pg_jobs_request query = {.request = {PG_BENCH_TYPE, PG_BENCH_VERSION, PG_CMD_JOBS, 0, 0},
                                      .after_id = last_bench_job};
@@ -140,26 +184,30 @@ int main(void) {
                 memset(&msg, 0, sizeof(msg));
                 msg.type = PG_JOB; msg.version = PG_VERSION;
                 msg.body.job.epoch = decision.decision.epoch;
-                msg.body.job.id = ++reported_job;
+                msg.body.job.id = job->id;
                 msg.body.job.release_ns = job->release_ns;
                 msg.body.job.deadline_ns = pg_job_budget_ns(job->release_ns, job->deadline_ns);
                 msg.body.job.finish_ns = job->finish_ns;
-                if (!policy_send(policy_coid, &msg, &decision)) { perror("PowerGuard job stream"); result = 1; break; }
+                if (!policy_send(policy_coid, &msg, &decision)) {
+                    if (retry_policy()) { need_resume = 1; goto pause_loop; }
+                    perror("PowerGuard job stream"); result = 1; break;
+                }
                 last_bench_job = job->id;
             }
             if (result) break;
-        } else if (!last_bench_job) last_bench_job = bench.last_job_id;
-        else if (bench.last_job_id > last_bench_job) {
-            reported_job += bench.last_job_id - last_bench_job;
+        } else if (bench.last_job_id > last_bench_job) {
             memset(&msg, 0, sizeof(msg));
             msg.type = PG_JOB; msg.version = PG_VERSION;
             msg.body.job.epoch = decision.decision.epoch;
-            msg.body.job.id = reported_job;
+            msg.body.job.id = bench.last_job_id;
             msg.body.job.release_ns = bench.last_job_release_ns;
             msg.body.job.deadline_ns = pg_job_budget_ns(bench.last_job_release_ns,
                                                         bench.last_job_deadline_ns);
             msg.body.job.finish_ns = bench.last_job_finish_ns;
-            if (!policy_send(policy_coid, &msg, &decision)) { perror("PowerGuard job"); result = 1; break; }
+            if (!policy_send(policy_coid, &msg, &decision)) {
+                if (retry_policy()) { need_resume = 1; goto pause_loop; }
+                perror("PowerGuard job"); result = 1; break;
+            }
             last_bench_job = bench.last_job_id;
         }
 
@@ -171,9 +219,16 @@ int main(void) {
             msg.body.manager.epoch = decision.decision.epoch;
             msg.body.manager.sequence = ++progress_sequence;
             msg.body.manager.progress_ns = (uint64_t)progress.tv_sec * UINT64_C(1000000000) + progress.tv_nsec;
-            if (!policy_send(policy_coid, &msg, &decision)) { perror("manager progress heartbeat"); result = 1; break; }
+            if (!policy_send(policy_coid, &msg, &decision)) {
+                if (retry_policy()) { need_resume = 1; goto pause_loop; }
+                perror("manager progress heartbeat"); result = 1; break;
+            }
         }
-        struct timespec pause = {.tv_nsec = 5 * PG_MS};
+pause_loop: ;
+        /* A timeout may follow an accepted job or heartbeat. Resynchronize
+         * before retrying either; leases and the independent enforcer continue
+         * to protect workers while policy IPC is unavailable. */
+        struct timespec pause = {.tv_nsec = waiting_for_critical ? PG_MS : 5 * PG_MS};
         uint64_t tolerance = 1;
         if (TimerTimeout(CLOCK_MONOTONIC, TIMER_TOLERANCE, NULL, &tolerance, NULL) == -1) {
             perror("manager high resolution tolerance"); result = 1; break;

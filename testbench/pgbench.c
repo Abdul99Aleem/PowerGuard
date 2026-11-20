@@ -1,5 +1,6 @@
 #define _POSIX_C_SOURCE 200809L
 #include "pgbench_protocol.h"
+#include "pg_progress.h"
 #include <errno.h>
 #include <inttypes.h>
 #include <pthread.h>
@@ -21,9 +22,13 @@
 #define PERIOD_NS 10000000ULL
 #define DEADLINE_NS 5000000ULL
 #define JOB_NS 1000000ULL     /* approximate 1 ms CPU burn */
-#define WORKER_NS 10000000ULL    /* 10 ms: meets the supervisor's 50 ms lease */
+#define WORKER_NS 10000000ULL    /* 10 ms duty cycle frame */
+#define WORK_CHUNK_NS 500000ULL  /* recheck the cap between compute chunks */
 #define TELEMETRY_NS 10000000ULL /* 10 ms: meets the supervisor's CPU freshness */
 static pthread_mutex_t mu = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t cap_changed;
+static pg_progress *progress;
+static int force_applied;
 static volatile sig_atomic_t running = 1;
 static pg_status_t st;
 static uint64_t start_ns, last_sensor_ns, last_tick_ns, last_cpu_ns;
@@ -37,6 +42,15 @@ static uint64_t scenario_started_ns;
 static uint64_t now_ns(clockid_t id) {
     struct timespec t; clock_gettime(id, &t);
     return (uint64_t)t.tv_sec * NS + (uint64_t)t.tv_nsec;
+}
+static int init_cap_condition(void) {
+    pthread_condattr_t attr;
+    int error = pthread_condattr_init(&attr);
+    if (error) return error;
+    error = pthread_condattr_setclock(&attr, CLOCK_MONOTONIC);
+    if (!error) error = pthread_cond_init(&cap_changed, &attr);
+    pthread_condattr_destroy(&attr);
+    return error;
 }
 static void sleep_until(uint64_t when) {
     struct timespec t = { (time_t)(when / NS), (long)(when % NS) };
@@ -86,6 +100,20 @@ static void *critical_worker(void *unused) {
 }
 /* Called under mu at a worker boundary, after the previous chunk finished. */
 static int worker_cap(int id, uint64_t now) {
+    if (pg_progress_forced(progress) && !force_applied) {
+        force_applied = 1; st.forced_off = 1;
+        stop_nc1_after_nc2 = nc1_cap && nc2_cap;
+        if (!stop_nc1_after_nc2) nc1_cap = 0;
+        nc2_cap = 0; lease_until_ns = 0;
+        level = st.level_requested = 2;
+        level_command_ns = now; ack_ns[0] = ack_ns[1] = 0;
+        pthread_cond_broadcast(&cap_changed);
+    }
+    /* Enforce the sticky latch at every boundary as well as at admission. */
+    if (force_applied) {
+        nc2_cap = 0;
+        if (!stop_nc1_after_nc2) nc1_cap = 0;
+    }
     if (lease_until_ns && now >= lease_until_ns) {
         /* The worker can withdraw a grant even if both services are stalled. */
         nc2_cap = nc1_cap = 0;
@@ -94,12 +122,14 @@ static int worker_cap(int id, uint64_t now) {
         level = st.level_requested = 2;
         level_command_ns = now;
         ack_ns[0] = ack_ns[1] = 0;
+        pthread_cond_broadcast(&cap_changed);
     }
     /* On a two-worker stop, NC2 gates first. If it stalls, NC1 still
        closes after one worker period and the pair stays unconfirmed. */
     if (stop_nc1_after_nc2 && (id == 1 || now - level_command_ns >= WORKER_NS)) {
         nc1_cap = 0;
         stop_nc1_after_nc2 = 0;
+        pthread_cond_broadcast(&cap_changed);
     }
     int cap = id == 0 ? nc1_cap : nc2_cap;
     if (!(id == 0 && stop_nc1_after_nc2) && ack_ns[id] < level_command_ns) {
@@ -124,26 +154,36 @@ static int worker_cap(int id, uint64_t now) {
 
 static void *noncritical_worker(void *ptr) {
     int id = (int)(intptr_t)ptr;
-    uint64_t next = now_ns(CLOCK_MONOTONIC);
+    uint64_t frame = now_ns(CLOCK_MONOTONIC);
+    pthread_mutex_lock(&mu);
     while (running) {
-        pthread_mutex_lock(&mu);
         uint64_t now = now_ns(CLOCK_MONOTONIC);
+        frame += (now - frame) / WORKER_NS * WORKER_NS;
         int cap = worker_cap(id, now);
-        uint64_t grant_end = lease_until_ns;
-        int local_scenario = scenario;
-        pthread_mutex_unlock(&mu);
         /* Approximate software duty-cycle: normal NC1 20%, NC2 15%; spike NC2 90%. */
-        int percent = id == 0 ? 20 : (local_scenario == PG_SC_SPIKE ? 90 : 15);
-        if (cap > 0) {
-            uint64_t end = now_ns(CLOCK_MONOTONIC) + (uint64_t)percent * (unsigned)cap * WORKER_NS / 10000;
-            if (grant_end && end > grant_end) end = grant_end;
-            burn_until(end);
+        int percent = id == 0 ? 20 : (scenario == PG_SC_SPIKE ? 90 : 15);
+        uint64_t wake = frame + WORKER_NS;
+        if (lease_until_ns && lease_until_ns < wake) wake = lease_until_ns;
+        if (id == 0 && stop_nc1_after_nc2 && level_command_ns + WORKER_NS < wake)
+            wake = level_command_ns + WORKER_NS;
+        uint64_t work_end = frame + (uint64_t)percent * (unsigned)cap * WORKER_NS / 10000;
+        if (work_end > wake) work_end = wake;
+        if (work_end > now) {
+            uint64_t chunk_end = now + WORK_CHUNK_NS;
+            pthread_mutex_unlock(&mu);
+            burn_until(work_end < chunk_end ? work_end : chunk_end);
+            pthread_mutex_lock(&mu);
+            continue;
         }
-        next += WORKER_NS;
-        uint64_t n = now_ns(CLOCK_MONOTONIC);
-        if (next < n) next = n + 1000000ULL;
-        sleep_until(next);
+        struct timespec until = { (time_t)(wake / NS), (long)(wake % NS) };
+        int error = pthread_cond_timedwait(&cap_changed, &mu, &until);
+        if (error && error != ETIMEDOUT) {
+            pthread_mutex_unlock(&mu);
+            fprintf(stderr, "NC%d cap wait: %s\n", id + 1, strerror(error));
+            return NULL;
+        }
     }
+    pthread_mutex_unlock(&mu);
     return NULL;
 }
 static void *sampler(void *unused) {
@@ -205,6 +245,7 @@ static void *csv_writer(void *ptr) {
 /* Called under mu. Renewing a grant preserves its original effect timestamp. */
 static int apply_caps(const pg_cap_request_t *cmd, uint64_t now) {
     int nc1 = cmd->request.arg, nc2 = cmd->request.extra;
+    if (!pg_progress_allows(progress, (unsigned)nc1, (unsigned)nc2)) return ESTALE;
     if (nc1 < 0 || nc1 > 100 || nc2 < 0 || nc2 > 100) return EINVAL;
     if (cmd->request.command == PG_CMD_LEASED_CAPS) {
         if (!cmd->epoch || !cmd->decision_id || cmd->until_ns <= now ||
@@ -234,12 +275,20 @@ static int apply_caps(const pg_cap_request_t *cmd, uint64_t now) {
     st.level_requested = level;
     level_command_ns = now;
     ack_ns[0] = ack_ns[1] = 0;
+    pthread_cond_broadcast(&cap_changed);
     return 0;
 }
 
 static void serve(const char *csv_path) {
+    int cap_error = init_cap_condition();
+    if (cap_error) {
+        fprintf(stderr, "cap condition: %s\n", strerror(cap_error));
+        exit(1);
+    }
     name_attach_t *attach = name_attach(NULL, PG_BENCH_NAME, 0);
     if (!attach) { perror("name_attach"); exit(1); }
+    progress = pg_progress_open(1);
+    if (!progress) { perror("bench progress mapping"); exit(1); }
     FILE *fp = fopen(csv_path, "w");
     if (!fp) { perror(csv_path); name_detach(attach, 0); exit(1); }
     fprintf(fp, "monotonic_ns,scenario,temp_sim_milli_c,sensor_age_ms,process_cpu_per_core_tenths,level_requested,level_applied,supervisor_state,critical_jobs,deadline_misses,max_response_us,max_release_jitter_us,last_actuation_us,recovery_to_full_ms\n");
@@ -267,7 +316,16 @@ static void serve(const char *csv_path) {
         struct _msg_info info;
         int rcvid = MsgReceive(attach->chid, &msg, sizeof msg, &info);
         if (rcvid == -1) { if (errno == EINTR) continue; perror("MsgReceive"); break; }
-        if (rcvid == 0) { if (msg.pulse.code == _PULSE_CODE_DISCONNECT) ConnectDetach(msg.pulse.scoid); continue; }
+        if (rcvid == 0) {
+            if (msg.pulse.code == _PULSE_CODE_DISCONNECT) ConnectDetach(msg.pulse.scoid);
+            if (msg.pulse.code == PG_PULSE_FORCE_OFF) pthread_cond_broadcast(&cap_changed);
+            if (msg.pulse.code == _PULSE_CODE_UNBLOCK) {
+                struct _msg_info pending;
+                if (MsgInfo(msg.pulse.value.sival_int, &pending) != -1 &&
+                    (pending.flags & _NTO_MI_UNBLOCK_REQ)) MsgError(msg.pulse.value.sival_int, -1);
+            }
+            continue;
+        }
         if (msg.req.type == _IO_CONNECT) { MsgReply(rcvid, EOK, NULL, 0); continue; }
         pg_status_t result;
         int err = 0;
@@ -286,6 +344,7 @@ static void serve(const char *csv_path) {
             }
             break;
           case PG_CMD_LEVEL:
+            if (pg_progress_forced(progress) && msg.req.arg != 2) { err = ESTALE; break; }
             if (cap_epoch) { err = EBUSY; break; }
             if (msg.req.arg < 0 || msg.req.arg > 2) err = EINVAL;
             else {
@@ -296,6 +355,7 @@ static void serve(const char *csv_path) {
                 nc2_cap = level < 1 ? 100 : 0;
                 level_command_ns = now_ns(CLOCK_MONOTONIC);
                 ack_ns[0] = ack_ns[1] = 0;
+                pthread_cond_broadcast(&cap_changed);
                 if (old == 2 && level < 2 && recover_ns == 0) recover_ns = level_command_ns;
             }
             break;
@@ -306,9 +366,14 @@ static void serve(const char *csv_path) {
           case PG_CMD_STATE:
             if (msg.req.arg < PG_ST_UNKNOWN || msg.req.arg > PG_ST_RECOVERY ||
                 msg.req.extra < 0 || msg.req.extra > 100) err = EINVAL;
-            else { current_state = msg.req.arg; st.supervisor_state = current_state; st.recovery_percent = msg.req.extra; }
+            else { current_state = pg_progress_forced(progress) ? PG_ST_CRITICAL : msg.req.arg;
+                   st.supervisor_state = current_state;
+                   st.recovery_percent = pg_progress_forced(progress) ? 0 : msg.req.extra; }
             break;
-          case PG_CMD_STOP: running = 0; break;
+          case PG_CMD_STOP:
+            running = 0;
+            pthread_cond_broadcast(&cap_changed);
+            break;
           default: err = EINVAL; break;
         }
         result = st;
@@ -324,7 +389,9 @@ static void serve(const char *csv_path) {
     /* Threads wake at most once per second; SIGINT can interrupt MsgReceive. */
     pthread_join(critical, NULL); pthread_join(nc1, NULL); pthread_join(nc2, NULL);
     pthread_join(sample, NULL); pthread_join(logger, NULL);
+    pthread_cond_destroy(&cap_changed);
     fclose(fp);
+    pg_progress_close(progress, 1);
 }
 static void print_status(const pg_status_t *s) {
     const char *names[] = {"normal", "ramp", "spike", "freeze"};

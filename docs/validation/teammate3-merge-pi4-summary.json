@@ -1,0 +1,265 @@
+{
+  "date": "2026-11-21",
+  "source_revision": "merge containing this report; normalized code blobs identify the final sources",
+  "parents": {
+    "threadctl": "b62852e2a9a4ca4f84bbd20cdd74ed4ba820e958",
+    "teammate3": "5c37cb55a325f5b73382fafb95375363d0c2586a"
+  },
+  "target": {
+    "ip": "10.78.56.80",
+    "board": "Raspberry Pi 4B",
+    "qnx": "8.0.0",
+    "architecture": "aarch64le",
+    "cpus": 4,
+    "idle_tids": [
+      1,
+      2,
+      3,
+      4
+    ]
+  },
+  "core": {
+    "target_dir": "/tmp/pg-t3-merge-2111/threadctl-results-41111599",
+    "profile": "release -O2 -Wall -Wextra -Werror",
+    "command": "PG_TRIALS=2 PG_STALL_TRIALS=30 PG_RESTART_TRIALS=10 sh validate-threadctl.sh 1 2 3 4",
+    "target_assertions_passed": true,
+    "manager_restarts": 10,
+    "manager_and_enforcer_alive_after_b5": true,
+    "manager_stalls": {
+      "source": "results\\teammate3-merge\\verified-core\\stall-confirmations.txt",
+      "trials": 30,
+      "minimum_required": 30,
+      "manager_deadline_ns": 50000000,
+      "confirmation_limit_ns": 20000000,
+      "worst_confirmation_ns": 12135167,
+      "min_confirmation_ns": 6296852,
+      "worst_effect_ns": 10759648,
+      "worst_pause_to_confirmation_ns": 61314777,
+      "unique_decisions": 30,
+      "errors": [],
+      "pass": true
+    },
+    "raw_critical_jobs": {
+      "source": "results\\teammate3-merge\\verified-core\\jobs.csv",
+      "first_id": 1,
+      "last_id": 21601,
+      "jobs": 21601,
+      "gaps": [],
+      "invalid_timestamps": [],
+      "period_errors": 0,
+      "deadline_misses": 0,
+      "missed_ids": [],
+      "response": {
+        "n": 21601,
+        "p50_ns": 624407,
+        "p95_ns": 686370,
+        "p99_ns": 687741,
+        "max_ns": 1148518
+      },
+      "release_lateness": {
+        "n": 21601,
+        "p50_ns": 20111,
+        "p95_ns": 22296,
+        "p99_ns": 31204,
+        "max_ns": 650963
+      },
+      "execution_wall_time": {
+        "n": 21601,
+        "p50_ns": 604871,
+        "p95_ns": 666722,
+        "p99_ns": 666741,
+        "max_ns": 666741
+      },
+      "pass": true
+    },
+    "pre_b5": {
+      "restrictions": 36,
+      "late": 0,
+      "unconfirmed": 0,
+      "worst_effect_ns": 13820500,
+      "worst_receipt_ns": 14798204,
+      "scorecard": "QNX supervisor scorecard\n1. Restriction within 20.0 ms: PASS  confirmed=36 late=0 unconfirmed=0 pending=0 worst=13.820 ms\n2. Critical deadline misses: 0/21398 reported jobs, missing records=0, max completed latency=1.149 ms, latest latency=0.594 ms\n3. Worst observed overshoot in 100 ms windows: thermal=0.0 C CPU=6 percentage points power=2 index points\n4. Transition jitter, case 1 Normal to Warning: 2.051 ms (n=2)\n5. Controlled restoration: last=3034.635 ms worst=3057.061 ms n=35\n"
+    },
+    "b5": {
+      "supervisor_stop_ns": 27075499831222,
+      "last_progress_ns": 27075499824926,
+      "forced_ns": 27075733228722,
+      "both_off_ns": 27075549920426,
+      "observed_ns": 27075735013556,
+      "observed_from_progress_ns": 235188630,
+      "latched_after_resume": 1
+    },
+    "post_b5": {
+      "scorecard": "QNX supervisor scorecard\n1. Restriction within 20.0 ms: FAIL  confirmed=37 late=1 unconfirmed=0 pending=0 worst=959.400 ms\n2. Critical deadline misses: 0/21602 reported jobs, missing records=0, max completed latency=1.149 ms, latest latency=0.632 ms\n3. Worst observed overshoot in 100 ms windows: thermal=0.0 C CPU=6 percentage points power=2 index points\n4. Transition jitter, case 1 Normal to Warning: 2.051 ms (n=2)\n5. Controlled restoration: last=3034.635 ms worst=3057.061 ms n=35\n",
+      "deliberate_late_receipt_retained": true,
+      "raw_capture_last_id": 21601,
+      "reported_job_count": 21602,
+      "endpoint_note": "Raw recorder and scorecard stop at different instants; both streams report zero internal missing records."
+    },
+    "release_actor_sha256": {
+      "PowerGuard": "8e14f6a14d143f0a21af44bad9769f0cbe112778969719f9574a760c898c9bd7",
+      "pg-runtime": "6ef967cc9a4cca665c5d4cd9650b6e86702db0c79989aab11dd9de011a7a098f",
+      "pg-manager": "2972171308d9bd32844d3dbfdd2a871c3186e8b572f011a58ec31759396f43d5",
+      "pg-enforcer": "17ef69cebcea40ca010473242ca2c84f1e8b3cdc65b1a1a71251dbf49fad7cfb",
+      "pg-threadctl-check": "92fd9e6cc77f47ed5044a6a2a2cdb60e71ef4c0682dfa22a22712d5c66384503",
+      "pg-check": "a49eedad40598e95354844e89c5412c256a5f69e6984717aebbf2b12d7fcbe81",
+      "pg-manager-check": "6e9848730a938fdb30ab7d0f9646fc984ecd655568a71e3e5941ad8494b1a5c3",
+      "pg-merge-check": "bc2055e38042266daf73ec2fb57caa1584eb28336f5b41c1832d06ba8937aec4",
+      "pg-supervisor-check": "8e331d087e6ba0847eecfce40203cc0fc8537d16cb370873d139447696802d4f",
+      "pg-console": "29af8630f300735ece38904b632ae3f099a3bc19c0a3f938f9efa11824a63299",
+      "pg-validate": "b0885cc1cce3038acf4c500058db829b2cab505e8f7ac07ebddd85fa8c19297e"
+    }
+  },
+  "legacy": {
+    "profile": "O2 instrumented bench/manager; debug root assets; standalone legacy workload, not split-stack overhead",
+    "handoff_pass": true,
+    "quiet_smoke": [
+      {
+        "mode": "B",
+        "begin_ns": "27552940009926",
+        "end_ns": "27554941025148",
+        "wall_ns": "2001015222",
+        "cpu_ns": "9578110",
+        "core_pct": "0.47866",
+        "reads": "80",
+        "notices": "80",
+        "handled": "80",
+        "wd_checks": "40",
+        "wd_trips": "0",
+        "skipped": "0",
+        "normal": "1"
+      },
+      {
+        "mode": "C",
+        "begin_ns": "27560009016167",
+        "end_ns": "27562010026463",
+        "wall_ns": "2001010296",
+        "cpu_ns": "9060332",
+        "core_pct": "0.45279",
+        "reads": "80",
+        "notices": "20",
+        "handled": "20",
+        "wd_checks": "40",
+        "wd_trips": "0",
+        "skipped": "0",
+        "normal": "1"
+      },
+      {
+        "mode": "A",
+        "begin_ns": "27567096906722",
+        "end_ns": "27569097031759",
+        "wall_ns": "2000125037",
+        "cpu_ns": "1998424722",
+        "core_pct": "99.91499",
+        "reads": "80",
+        "notices": "80",
+        "handled": "80",
+        "wd_checks": "40",
+        "wd_trips": "0",
+        "skipped": "0",
+        "normal": "1"
+      }
+    ],
+    "watchdog_fault_pass": true,
+    "startup_latch_rejects_manual_admission_without_epoch": true,
+    "archived_raw_jobs": {
+      "A": {
+        "rows": 604,
+        "gaps": 0,
+        "misses": 0,
+        "sha256": "fd225e61eef93c72961887d06de061b8b1cb502532362a703b3078bc5e9da926"
+      },
+      "B": {
+        "rows": 604,
+        "gaps": 0,
+        "misses": 0,
+        "sha256": "805965df8fee9c71e06d69b2d05a3b481151a62cc9eb8ddf15870314b6d6a8ad"
+      },
+      "C": {
+        "rows": 604,
+        "gaps": 0,
+        "misses": 0,
+        "sha256": "e273d97f6836f793874735fb5b50678161b119341703a4171089e4fc1af389e3"
+      },
+      "handoff": {
+        "rows": 1334,
+        "gaps": 0,
+        "misses": 0,
+        "sha256": "122bc54600fccd3e003c4ed3a8742c792ecb64429e170421d0049b5e4822550f"
+      },
+      "watchdog": {
+        "rows": 556,
+        "gaps": 0,
+        "misses": 0,
+        "sha256": "f3992e72e615fb593fee4d626915efd154158458471074c649a96e05901699ac"
+      }
+    },
+    "raw_smoke_job_files_now_collected": true,
+    "overhead_executable_sha256": "f4e8089b158259e832d1d1150b736fbf1c78f9fd2d597577eaa8407838a6f137",
+    "handoff_executable_sha256": "f4cb02f518d2b6d88ce44dbe0e9de2c883a731d87e6c6ad7c0e3af41e7481ac6",
+    "final_legacy_cli_sha256": "fb2491ca7f97f8e04afbc7a67e17f5a48f645783d46629527abbbe8e6df8654c",
+    "scope_note": "The server-only manual admission guard was tightened after native validation; private legacy startup/watchdog/handoff/smoke tests validate that path. The native runtime enforcement and client scenario protocol are unchanged."
+  },
+  "builds": {
+    "qnx_debug_and_release": "pass",
+    "default_handoff_overhead_ham_suite": "pass",
+    "host_policy_replay": "pass",
+    "negative_qualification_and_latch_checks": "pass on host and Pi",
+    "python_analysis_tests": 4
+  },
+  "retained_failures": [
+    {
+      "capture": "results/teammate3-merge/legacy-watchdog-initial-probe.txt",
+      "reason": "Cross-runtime test assumed absent per-worker legacy fields; aggregate ACK fallback corrected and both variants retested."
+    },
+    {
+      "capture": "results/teammate3-merge/final-core",
+      "target_dir": "/tmp/pg-t3-merge-2111/threadctl-results-37294127",
+      "reason": "Manager exited on policy sample timeout during supervisor stop. B5 gates/latch passed but process survival failed. Transient retry with accepted-cursor resynchronization corrected this; full verified run passes."
+    },
+    {
+      "capture": "verified-core/latched-scores.txt",
+      "reason": "Supervisor SIGSTOP prevents prompt receipt; one late restriction is retained and evaluated separately by B5 independent gate/latch timing."
+    }
+  ],
+  "source_blobs": {
+    "manager/pg-manager.c": "667da29ce459c8e9740af1e94a0c643f052384d0",
+    "runtime/runtime.c": "296c306d20c2468312ba4415bf0cf36c8fe95a4e",
+    "runtime/worker.c": "e344ac44edcd1e57b85f194b1c8218c89d9956c0",
+    "runtime/enforcer.c": "b3cc50d2878be36527d42552af6c19d63360069b",
+    "src/PowerGuard.c": "80e7bab936b4736afac8efe8ff3223aa9e95109e",
+    "supervisor/policy.c": "f8c8314b04f043e120fc349e1468a87d9f5ecbbb",
+    "platform/progress.c": "ace9daef397b9f60def7854b53252eac110706a5",
+    "platform/threadctl.c": "138dd6af953aa99c0dce5a43b144a146de15f9a4",
+    "include/pg_progress.h": "83ccd001d9b26ac847095431fab84ab2c9fc305b",
+    "include/pg_qualification.h": "1100c9b74c3fb3bb90f4c174efd6bca370f77cf3",
+    "include/policy.h": "7aa62c021d8af122a6fa96c2749d641f38105dcc",
+    "include/ipc.h": "277771a7e368c7fcb8f3ccee398689a3b1229af4",
+    "testbench/pgbench_protocol.h": "bd7dc379bbf96ee77c744e88d3e91724a5dd01b6",
+    "testbench/pgbench.c": "b1471d32c1c35d6d490a54bf543c79b4c55a07b5",
+    "tests/merge_checks.c": "58bb0f78d27ba11bf4f6af169830a6de031e49a0",
+    "tests/overhead-trial.inc": "393e785590aaf0756be6cc6d291e8f2865b7f777",
+    "tools/pg-supervisor-check.c": "e982c86b55f43e036b3b0cc82147e1e56f4ec573",
+    "scripts/validate-threadctl.sh": "a7f2032a634937206f850a81293dc3239246f7c0",
+    "scripts/validate-startup-latch.sh": "b2bcbce35f0f25491ab95825d6a6278082107346",
+    ".milestone-build.py": "d6c7ab30c0c38f1b8abbf52f8b681c2afed98ee0"
+  },
+  "pending": [
+    "full nine-window corrected overhead comparison with all raw jobs",
+    "complete split-stack supervision CPU budget including enforcer and real sensor",
+    "larger phase-matched jitter series",
+    "real thermal loop and conversion freshness/physical peaks",
+    "physical LEDs",
+    "deployment-account negative permission tests",
+    "worker/coordinator/enforcer failure and restart qualification",
+    "long soak and representative IRQ load",
+    "Pi 5/BSP",
+    "optional HAM activation/restart demonstration"
+  ],
+  "historical_docx_erratum": {
+    "claimed_final_max_ms": 1.74,
+    "bundled_final_max_ms": 1.877203,
+    "historical_final_supervision_pct": 0.5262,
+    "earlier_supervision_pct": 0.5575
+  }
+}

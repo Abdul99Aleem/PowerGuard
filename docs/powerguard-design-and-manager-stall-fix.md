@@ -108,6 +108,7 @@ flowchart TB
     C[Critical process] -->|every job record| R
     R -->|batched jobs and samples| M
     D[Independent watchdog] -->|heartbeat| R
+    S -->|lock-free progress publication| D
 ```
 
 | Component | Responsibility | CPU | Base FIFO priority |
@@ -116,7 +117,7 @@ flowchart TB
 | `pg-enforcer` | Decision delivery and matching effect confirmation | 0 | 24 |
 | `pg-manager` | Telemetry, critical-job delivery and progress heartbeat | 0 | 20 |
 | `pg-runtime` coordinator | Worker identity, gate ordering, grants, CPU counters and job ring | 0 | 22 |
-| `pg-runtime watchdog` | Independent coordinator/worker progress observation | 0 | 26 |
+| `pg-runtime watchdog` | Read supervisor progress without IPC; latch off and pulse runtime heartbeat | 0 | 26 |
 | Critical worker | Fixed critical computation and job timestamps | 1 | 30 |
 | NC1 worker | Lower-criticality work and local grant enforcement | 2 | 10 |
 | NC2 worker | Lowest-criticality work and local grant enforcement | 3 | 8 |
@@ -214,8 +215,12 @@ clear observation and restoration dwell still apply; receipt of an effect
 does not clear a manager fault or authorize immediate restoration.
 
 A restarted manager cannot reset its sequence inside the existing epoch.
-Restart/requalification uses a new session. Automatic crash takeover and
-additional failure-path coverage remain checklist items.
+The teammate-3 integration now queries the supervisor's accepted source-job
+cursor and progress sequence before continuing the existing run. Ten actual
+manager restarts are covered by the new Pi regression. Lost/overwritten records
+remain qualification failures. See [the integration report](teammate3-merge-validation.md)
+for the nonblocking supervisor watchdog, persistent forced-off latch and latest
+results. A watchdog trip requires restarting the complete run.
 
 ## 6. Gate enforcement and confirmation integrity
 
@@ -291,7 +296,9 @@ The required clear conditions and valid acknowledgements remain in force.
 
 Temperature and CPU maximum age are 150 ms. Worker grant, effect-path and
 manager-progress timeouts are 50 ms; these are separate clocks despite having
-the same configured value. The watchdog timeout is 100 ms. Recovery allows
+the same configured value. The runtime's watchdog-heartbeat limit is 100 ms;
+the separate supervisor-progress watchdog trips at 200 ms, checked every 50 ms.
+Recovery allows
 at most a 35 ms gap between qualifying observations.
 
 The critical process executes 100,000 fixed volatile arithmetic iterations
@@ -436,7 +443,7 @@ the declared release period and every captured deadline.
 | EPROTO or wrong reply layout | Rebuild and deploy every bench-protocol-v4 component together |
 | Idle-clock startup rejection | Check TIDs, names, CPU mapping, permissions and image identity; do not substitute arbitrary thread clocks |
 | FIFO/affinity/timer setup failure | Inspect required QNX abilities and valid CPU clusters; do not label a fallback run as qualified |
-| BAD_MANAGER after restart | A manager must not restart its sequence in the old epoch; stop and requalify the session |
+| BAD_MANAGER after restart | Check accepted-cursor/sequence recovery and source records; a watchdog FORCED_OFF latch requires a complete new run |
 | Recovery takes longer than three seconds | Inspect source age, clear thresholds, sample gaps, manager progress and effective ACKs; uninterrupted dwell is required |
 | Critical job overwrite or gap | Retain the failure, keep recorders running and inspect producer/consumer delays; do not report zero misses from an incomplete stream |
 | Receipt or decision mismatch | Inspect epoch, decision ID, both caps and first accepted receipt; do not reuse an old ACK |

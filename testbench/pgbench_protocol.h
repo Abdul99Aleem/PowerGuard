@@ -94,7 +94,7 @@ typedef struct {
     uint64_t worker_seen_ns[3], worker_effect_ns[2];
     uint64_t first_job_id, job_overwrites, worker_dropped_reports;
     uint64_t enforcer_seen_ns;
-    uint32_t enforcer_ok, reserved;
+    uint32_t enforcer_ok, forced_off; /* former reserved word; v4 layout unchanged */
 } pg_status_t;
 
 #define PG_FEATURE_THREADCTL 1u

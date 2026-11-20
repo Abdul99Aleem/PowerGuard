@@ -12,7 +12,7 @@ out="threadctl-results-$$"
 mkdir "$out"
 runtime= watchdog= supervisor= manager= enforcer= recorder= sampler=
 cleanup() {
-    for child in "$manager" "$watchdog"; do
+    for child in "$manager" "$watchdog" "$supervisor"; do
         if [ -n "$child" ]; then kill -CONT "$child" 2>/dev/null || :; fi
     done
     for child in "$recorder" "$sampler" "$manager" "$enforcer" "$watchdog" "$supervisor"; do
@@ -42,6 +42,7 @@ pidin syspage=cluster >>"$out/platform.txt"
 ./pg-threadctl-check >"$out/threadctl-check.txt" 2>&1
 ./pg-check >"$out/policy-check.txt" 2>&1
 ./pg-manager-check >"$out/manager-check.txt" 2>&1
+./pg-merge-check >"$out/merge-check.txt" 2>&1
 ./pg-runtime serve "$@" >"$out/runtime.txt" 2>&1 & runtime=$!
 sleep 1
 kill -0 "$runtime"
@@ -90,10 +91,26 @@ sleep 1
 kill -CONT "$watchdog"
 wait_state normal
 fi
+restart_trial=0
+while [ "$restart_trial" -lt "${PG_RESTART_TRIALS:-2}" ]; do
+    kill -TERM "$manager"
+    wait "$manager" || : # the deliberate SIGTERM may interrupt an IPC transaction
+    ./pg-manager >"$out/manager-restart-$restart_trial.txt" 2>&1 & manager=$!
+    wait_state normal
+    kill -0 "$manager"
+    restart_trial=$((restart_trial + 1))
+done
 ./pg-console --live scores 1 Normal Warning >"$out/scores.txt"
 ./pg-runtime status >"$out/end-status.txt"
 kill -0 "$manager"
 kill -0 "$enforcer"
 kill -0 "$recorder"
 kill -0 "$sampler"
+if [ "${PG_SUPERVISOR_FAULT_TESTS:-1}" -eq 1 ]; then
+    ./pg-supervisor-check "$supervisor" >"$out/supervisor-latch.txt"
+    ./pg-runtime status >"$out/latched-status.txt"
+    ./pg-console --live scores 1 Normal Warning >"$out/latched-scores.txt"
+    kill -0 "$enforcer"
+    kill -0 "$manager"
+fi
 echo "Target assertions passed. Evidence: $out. Inspect scores for metric limits; this is not full qualification."

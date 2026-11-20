@@ -92,6 +92,7 @@ static void display(const bench *b, const pg_status *before) {
     if (s->causes & BAD_LOAD) printf(" invalid-load");
     if (s->causes & WAIT_EFFECT) printf(" manager-timeout");
     if (s->causes & BAD_MANAGER) printf(" manager-progress-expired");
+    if (s->causes & FORCED_OFF) printf(" watchdog-latched-new-run-required");
     if (s->clear_since_ns) printf("  clear dwell=%.0f ms",ms(s->as_of_ns-s->clear_since_ns));
     puts("");
 }

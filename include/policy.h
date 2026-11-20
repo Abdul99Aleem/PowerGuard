@@ -17,7 +17,7 @@
 
 enum pg_state { NORMAL, WARNING, THROTTLED, CRITICAL, RECOVERY };
 enum pg_reason { TEMP = 1, CPU = 2, POWER = 4, BAD_TEMP = 8, BAD_LOAD = 16,
-                 WAIT_EFFECT = 32, BAD_MANAGER = 64 };
+                 WAIT_EFFECT = 32, BAD_MANAGER = 64, FORCED_OFF = 128 };
 /* GOOD asserts a verified acquisition. READ_ONLY has no conversion identity. */
 enum pg_quality { UNAVAILABLE, GOOD, FROZEN, SENSOR_ERROR, READ_ONLY };
 enum pg_source { REAL = 1, SIMULATED = 2 };
@@ -40,6 +40,7 @@ typedef struct {
     uint64_t healthy_since_ns, flat_since_ns, restriction_from_ns;
     uint64_t manager_progress_ns, manager_progress_seq;
     uint64_t restriction_decision_id, effect_received_id, effect_received_ns;
+    uint64_t forced_off_ns; /* only a new policy/run may clear a watchdog trip */
     unsigned recovery_origin;
     int have_sample, bad_sequence, explicit_power, power_value;
 } pg_policy;

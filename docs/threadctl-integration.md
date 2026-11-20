@@ -4,6 +4,10 @@ The [architecture and problem-resolution guide](powerguard-design-and-manager-st
 explains the original failures and the complete corrective design. This page
 focuses on integration and operation.
 
+The latest [teammate-3 integration report](teammate3-merge-validation.md) covers
+restart cursors, nonblocking supervisor progress, the persistent watchdog latch,
+benchmark corrections and fresh Pi evidence.
+
 This implements the affinity and readiness design from the ThreadCtl PRD on
 QNX SDP 8. Use the new `pg-runtime` stack for this integration. The original
 `pgbench serve` remains an explicitly legacy threaded testbench; rebuilding it
@@ -84,8 +88,17 @@ effects. The supervisor times manager progress independently at 50 ms; effect
 heartbeats cannot keep a stalled manager healthy. On progress expiry it commands
 Critical, and the enforcer can confirm both worker gates while the manager
 remains suspended. Recovery still requires fresh manager progress, telemetry and
-the original dwell. A manager restart requires a requalified session because
-the progress sequence must not restart within an existing epoch.
+the original dwell. A restarted manager now resumes the supervisor's accepted
+job cursor and progress sequence. Missing or overwritten runtime records still
+fail qualification; release IDs are never silently renumbered.
+
+The workload owner creates an instance-specific progress mapping before the
+supervisor starts. The supervisor publishes lock-free progress at least every
+100 ms. The watchdog checks it every 50 ms without sending a blocking policy
+request. At 200 ms lost progress it latches forced-off. The 270 ms B5 check
+verifies worker closure and persistent off after supervisor resume. Restart the
+complete run to clear this latch; fresh telemetry or a manager restart cannot
+clear it. The existing 100 ms watchdog-heartbeat readiness check remains separate.
 
 `PG_EFFECT_CONFIRMED` and `PG_CONFIRM_READ` return the supervisor's immutable
 first accepted receipt timestamp and qualifying detection timestamp. The fault
@@ -140,7 +153,8 @@ Place these files together on the Pi:
 
 ```text
 PowerGuard  pg-manager  pg-enforcer  pg-runtime  pg-console
-pg-check  pg-manager-check  pg-threadctl-check  pg-validate  pg-stall-check  pgbench
+pg-check  pg-manager-check  pg-merge-check  pg-threadctl-check  pg-validate
+pg-stall-check  pg-supervisor-check  pgbench
 validate-threadctl.sh
 ```
 

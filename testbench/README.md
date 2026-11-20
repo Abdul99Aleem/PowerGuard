@@ -2,6 +2,11 @@
 
 This is an **isolated application**, not a replacement for the team's policy supervisor. It provides a critical periodic worker, NC1 and NC2 CPU burners, simulated fault scenarios, a QNX message-passing CLI, CSV measurement, and an **optional HAM launcher**. It does not alter the root `Makefile`, `.project`, `.cproject`, or the supervisor.
 
+This remains the legacy single-process benchmark. Use the separate-process
+ThreadCtl runtime for the integrated application. See the current
+[integration and Pi report](../docs/teammate3-merge-validation.md) for teammate-3's
+worker improvements, persistent watchdog latch, build commands and evidence.
+
 ## Build on QNX SDP 8 / Momentics host
 
 Open a QNX SDP 8 environment with `qcc` on PATH, then from this directory:
@@ -12,7 +17,8 @@ make
 
 This builds `pgbench` and `pgbench_ham` for `aarch64le` (QNX Pi 4/5). If necessary use `make ARCH=aarch64le`. Copy executables to the QNX target via your usual Momentics deployment or `scp`. Do not try to run the QNX binaries on Windows.
 
-The default root Momentics project builds `src/PowerGuard.c` only; **build this subproject separately** with its Makefile, or add a separate C/C++ Makefile project in Momentics referencing `testbench/`.
+The root Makefile builds the policy, manager, split runtime, enforcer and
+qualification tools. Build this legacy subproject separately with its Makefile.
 
 ## Demo without HAM (start here)
 

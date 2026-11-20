@@ -6,8 +6,8 @@ CFLAGS += -I../include
 TARGETS = pgbench pgbench_ham
 all: $(TARGETS)
 
-pgbench: pgbench.c pgbench_protocol.h
-	$(QCC) -Vgcc_nto$(ARCH) $(CFLAGS) -o $@ pgbench.c -pthread
+pgbench: pgbench.c pgbench_protocol.h ../platform/progress.c ../include/pg_progress.h
+	$(QCC) -Vgcc_nto$(ARCH) $(CFLAGS) -o $@ pgbench.c ../platform/progress.c -pthread
 
 pgbench_ham: pgbench_ham.c
 	$(QCC) -Vgcc_nto$(ARCH) $(CFLAGS) -o $@ pgbench_ham.c -lham

@@ -1,5 +1,6 @@
 #include "protocol.h"
 #include "ipc.h"
+#include "pg_progress.h"
 #include <devctl.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -34,6 +35,17 @@ static uint64_t dropped[3];
 static clockid_t idle_clocks[4];
 static int fault_latched;
 static pid_t enforcer_pid;
+static pg_progress *progress;
+static void observe_force_off(uint64_t n) {
+    if (pg_progress_forced(progress) && !status.forced_off) {
+        status.forced_off = 1;
+        desired[0] = desired[1] = 0;
+        issued = n;
+        status.level_requested = 2;
+        status.applied_decision_id = 0; status.last_effective_ns = 0;
+        fprintf(stderr, "WATCHDOG latched forced-off; restart the complete run to restore capacity\n");
+    }
+}
 static void stop(int sig) { (void)sig; running = 0; }
 static uint64_t ns_clock(clockid_t clock) {
     struct timespec t;
@@ -140,6 +152,11 @@ static int gates_allowed(uint64_t n) {
            epoch && decision_id && n < grant_until;
 }
 static int ordered_cap(unsigned role, uint64_t n) {
+    if (status.forced_off) {
+        if (role == 1 && worker_cap[2] && n - issued < PG_WORKER_PERIOD * 2)
+            return worker_cap[1]; /* bound the NC2-first wait even if NC2 is lost */
+        return 0;
+    }
     if (!gates_allowed(n)) return 0;
     if (role == 1 && !desired[0] && !desired[1] &&
         !(worker_epoch[2] == epoch && worker_id[2] == decision_id && !worker_cap[2]))
@@ -210,6 +227,7 @@ static void worker_report(const pg_worker_message *m, const struct _msg_info *in
 }
 static int caps(const pg_cap_request_t *m, uint64_t n) {
     int a = m->request.arg, b = m->request.extra;
+    if (!pg_progress_allows(progress, (unsigned)a, (unsigned)b)) return ESTALE;
     if (a < 0 || a > 100 || b < 0 || b > 100 || (b && !a)) return EINVAL;
     if (!m->epoch || !m->decision_id || m->until_ns <= n || m->until_ns - n > UINT64_C(50000000) ||
         m->epoch < epoch || (m->epoch == epoch && m->decision_id < decision_id)) return ESTALE;
@@ -233,6 +251,8 @@ static int serve(const char *executable, char **idle_args, unsigned iterations) 
     pg_thread_print(&status.placement[0]);
     name_attach_t *attach = name_attach(NULL, PG_BENCH_NAME, 0);
     if (!attach) { perror("runtime name_attach (stop legacy pgbench first)"); return 1; }
+    progress = pg_progress_open(1);
+    if (!progress) { perror("runtime progress mapping"); name_detach(attach, 0); return 1; }
     int coid = ConnectAttach(0, 0, attach->chid, _NTO_SIDE_CHANNEL, 0);
     timer_t timer;
     struct sigevent event;
@@ -259,9 +279,16 @@ static int serve(const char *executable, char **idle_args, unsigned iterations) 
         struct _msg_info info;
         int rcvid = MsgReceive(attach->chid, &in, sizeof(in), &info);
         if (rcvid == -1) { if (errno == EINTR) continue; perror("runtime MsgReceive"); break; }
+        observe_force_off(now());
         if (!rcvid) {
             if (in.pulse.code == _PULSE_CODE_MINAVAIL) tick(now());
+            if (in.pulse.code == PG_PULSE_WATCHDOG) watchdog_at = now();
             if (in.pulse.code == _PULSE_CODE_DISCONNECT) ConnectDetach(in.pulse.scoid);
+            if (in.pulse.code == _PULSE_CODE_UNBLOCK) {
+                struct _msg_info pending;
+                if (MsgInfo(in.pulse.value.sival_int, &pending) != -1 &&
+                    (pending.flags & _NTO_MI_UNBLOCK_REQ)) MsgError(in.pulse.value.sival_int, -1);
+            }
             continue;
         }
         if (info.msglen < (ssize_t)sizeof(in.request.type)) { MsgError(rcvid, EINVAL); continue; }
@@ -313,7 +340,8 @@ static int serve(const char *executable, char **idle_args, unsigned iterations) 
             break;
         case PG_CMD_STATE:
             if (in.request.arg < PG_ST_UNKNOWN || in.request.arg > PG_ST_RECOVERY) e = EINVAL;
-            else { status.supervisor_state = in.request.arg; status.recovery_percent = in.request.extra; }
+            else { status.supervisor_state = status.forced_off ? PG_ST_CRITICAL : in.request.arg;
+                   status.recovery_percent = status.forced_off ? 0 : in.request.extra; }
             break;
         case PG_CMD_STOP: running = 0; break;
         default: e = ENOTSUP; break;
@@ -325,6 +353,7 @@ static int serve(const char *executable, char **idle_args, unsigned iterations) 
     timer_delete(timer); ConnectDetach(coid); name_detach(attach, 0);
     for (unsigned r = 0; r < 3; ++r) if (children[r] > 0) kill(children[r], SIGTERM);
     for (unsigned r = 0; r < 3; ++r) if (children[r] > 0) waitpid(children[r], NULL, 0);
+    pg_progress_close(progress, 1);
     return fault_latched ? 1 : 0;
 }
 static int client(const char *command) {
@@ -337,16 +366,28 @@ static int client(const char *command) {
         if (pg_thread_configure(0, 26, "pg-watchdog", &report)) { perror("watchdog qualification"); return 1; }
         pg_thread_print(&report);
         signal(SIGINT, stop); signal(SIGTERM, stop);
-        unsigned failures = 0;
+        pg_progress *watched = pg_progress_open(0);
+        if (!watched) { perror("watchdog progress mapping"); name_close(coid); return 1; }
+        uint64_t started = now();
+        int tripped = 0;
         while (running) {
-            request.command = PG_CMD_WATCHDOG;
-            if (!send_timed(coid, &request, sizeof(request), &s, sizeof(s)) || s.error) {
-                if (!failures++) fputs("WATCHDOG: runtime unresponsive; worker grants expire independently\n", stderr);
-            } else if (s.ready_mask != 7 || s.worker_dropped_reports) {
-                if (!failures++) fputs("WATCHDOG: incomplete readiness or dropped worker reports\n", stderr);
-            } else failures = 0;
-            struct timespec pause = {.tv_nsec = 20000000}; nanosleep(&pause, NULL);
+            uint64_t n = now();
+            if (pg_progress_stale(watched, n) ||
+                (!atomic_load_explicit(&watched->epoch, memory_order_acquire) && n - started >= 5000 * PG_MS))
+                pg_progress_trip(watched, n);
+            if (pg_progress_forced(watched) && !tripped++)
+                fputs("WATCHDOG: supervisor progress lost; forced-off latched until a new run\n", stderr);
+            if (MsgSendPulse(coid, 26, PG_PULSE_WATCHDOG, 0) == -1) {
+                perror("watchdog heartbeat pulse"); pg_progress_close(watched, 0); return 1;
+            }
+            uint64_t tolerance = 1;
+            struct timespec pause = {.tv_nsec = 50 * PG_MS};
+            if (TimerTimeout(CLOCK_MONOTONIC, TIMER_TOLERANCE, NULL, &tolerance, NULL) == -1) {
+                perror("watchdog timer tolerance"); pg_progress_close(watched, 0); return 1;
+            }
+            while (running && nanosleep(&pause, &pause) == -1 && errno == EINTR) {}
         }
+        pg_progress_close(watched, 0);
     } else if (!strcmp(command, "jobs") || !strcmp(command, "record")) {
         int stream = !strcmp(command, "record");
         signal(SIGINT, stop); signal(SIGTERM, stop);

@@ -18,6 +18,13 @@ static int send_timed(int coid, const void *q, size_t size, void *r, size_t capa
     return TimerTimeout(CLOCK_MONOTONIC, _NTO_TIMEOUT_SEND | _NTO_TIMEOUT_REPLY,
                         NULL, &timeout, NULL) != -1 && MsgSend(coid,q,size,r,capacity) != -1;
 }
+static int pause_tick(void) {
+    uint64_t tolerance=1;
+    struct timespec pause={.tv_nsec=2*PG_MS};
+    if (TimerTimeout(CLOCK_MONOTONIC,TIMER_TOLERANCE,NULL,&tolerance,NULL)==-1) return 0;
+    while (running && nanosleep(&pause,&pause)==-1 && errno==EINTR) {}
+    return 1;
+}
 int main(void) {
     pg_enforcer_request ping = {.request = {PG_BENCH_TYPE,PG_BENCH_VERSION,PG_CMD_ENFORCER,0,0}};
     if (pg_thread_configure(0,24,"pg-enforcer",&ping.placement)) { perror("enforcer qualification"); return 1; }
@@ -38,8 +45,10 @@ int main(void) {
         pg_status_t bench;
         pg_message_v1 q = {.type=PG_READ,.version=PG_VERSION};
         pg_reply_v1 snapshot;
-        if (!send_timed(runtime,&ping,sizeof(ping),&bench,sizeof(bench)) || bench.error ||
-            !send_timed(policy,&q,sizeof(q),&snapshot,sizeof(snapshot))) {
+        int heartbeat_ok=send_timed(runtime,&ping,sizeof(ping),&bench,sizeof(bench));
+        if (heartbeat_ok && bench.error) { errno=bench.error; heartbeat_ok=0; }
+        if (!heartbeat_ok || !send_timed(policy,&q,sizeof(q),&snapshot,sizeof(snapshot))) {
+            if ((errno==ETIMEDOUT || errno==EINTR) && pause_tick()) continue;
             perror("enforcer heartbeat/read"); result=1; break;
         }
         pg_status want=snapshot.decision;
@@ -84,12 +93,9 @@ int main(void) {
                 logged_epoch=want.epoch; logged_id=want.decision_id;
             }
         }
-        uint64_t tolerance=1;
-        struct timespec pause={.tv_nsec=2*PG_MS};
-        if (TimerTimeout(CLOCK_MONOTONIC,TIMER_TOLERANCE,NULL,&tolerance,NULL)==-1) {
+        if (!pause_tick()) {
             perror("enforcer timer tolerance"); result=1; break;
         }
-        while (running && nanosleep(&pause,&pause)==-1 && errno==EINTR) {}
     }
     name_close(runtime); name_close(policy);
     return result;

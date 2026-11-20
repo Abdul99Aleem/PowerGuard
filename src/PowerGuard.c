@@ -1,6 +1,7 @@
 /* The supervisor owns the policy state. Clients on this board share its IPC layout. */
 #include "ipc.h"
 #include "pg_threadctl.h"
+#include "pg_progress.h"
 #include <errno.h>
 #include <sched.h>
 #include <signal.h>
@@ -63,6 +64,8 @@ int main(int argc, char **argv) {
         perror("name_attach");
         return 1;
     }
+    pg_progress *progress = pg_progress_open(0);
+    if (!progress) { perror("workload progress mapping (start workloads first)"); return 1; }
 
     /* Keep checking sample age even when clients stop sending messages. */
     int coid = ConnectAttach(0, 0, server->chid, _NTO_SIDE_CHANNEL, 0);
@@ -88,7 +91,10 @@ int main(int argc, char **argv) {
 
     uint64_t armed_ns = 0;
     for (;;) {
+        uint64_t heartbeat = monotonic_ns();
+        pg_progress_publish(progress, policy.status.epoch, heartbeat);
         uint64_t next = pg_next_deadline(&policy);
+        if (!next || next > heartbeat + 100 * PG_MS) next = heartbeat + 100 * PG_MS;
         if (next != armed_ns) {
             struct itimerspec expiry = {
                 .it_value = {.tv_sec = next / UINT64_C(1000000000),
@@ -116,6 +122,9 @@ int main(int argc, char **argv) {
         }
         uint64_t now = monotonic_ns();
         pg_status before = policy.status;
+        uint64_t forced = pg_progress_forced(progress);
+        if (forced && !policy.forced_off_ns) policy.forced_off_ns = forced;
+        if (forced) pg_tick(&policy, now);
         if (rcvid == 0) {
             if (in.pulse.code == _PULSE_CODE_MINAVAIL) {
                 armed_ns = 0;
@@ -125,6 +134,11 @@ int main(int argc, char **argv) {
             trace_change(&before, &policy.status);
             if (in.pulse.code == _PULSE_CODE_DISCONNECT)
                 ConnectDetach(in.pulse.scoid);
+            if (in.pulse.code == _PULSE_CODE_UNBLOCK) {
+                struct _msg_info pending;
+                if (MsgInfo(in.pulse.value.sival_int, &pending) != -1 &&
+                    (pending.flags & _NTO_MI_UNBLOCK_REQ)) MsgError(in.pulse.value.sival_int, -1);
+            }
             continue;
         }
         const pg_message_v1 *msg = &in.message;

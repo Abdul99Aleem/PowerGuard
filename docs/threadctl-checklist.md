@@ -1,129 +1,100 @@
 # PowerGuard implementation and Pi testing checklist
 
-Updated 21 November 2026. Implementation and target evidence are separate.
-The tested target is **10.78.56.80**, QNX 8.0.0, four-core Raspberry Pi 4B.
-Tests use the QNX development connection, staged files under
-`/tmp/pg-manager-stall-2111` for the manager-stall fix, and a separate `PG_INSTANCE` for each run. The
-installed application and its default service names are not replaced.
+Updated 21 November 2026. Current integration merges teammate-3 `5c37cb5`
+into the ThreadCtl branch based on `b62852e`. Implementation, archived teammate
+results, and current-build Pi evidence are kept separate.
 
-**Manager-stall confirmation is now closed:** 30 one-second SIGSTOP trials
-confirmed at the supervisor before SIGCONT, worst **11.653796 ms** from the
-unchanged 50 ms manager-progress deadline. All 37 restriction receipts across
-the fault and nominal regressions were within 20 ms; worst **12.856777 ms**.
-See [the manager-stall validation report](manager-stall-fix-validation.md).
+The target is **10.78.56.80**, QNX 8.0.0, four-core Raspberry Pi 4B. Tests use
+private `PG_INSTANCE` names and staged files under `/tmp/pg-t3-merge-2111`.
+See [the integration and validation report](teammate3-merge-validation.md) and
+[the evidence summary](validation/teammate3-merge-pi4-summary.json).
 
-## Completed implementation and tests
+## Completed integration and fresh Pi verification
 
 | Requirement | Implementation | Pi validation |
 | --- | --- | --- |
-| Set runmask and inheritance with ThreadCtl | Complete | Passed on CPUs 0, 1, 2 and 3 |
-| 64-bit mask query, exchange and restoration | Complete | Passed |
-| Runmask and inherit-mask readback | Complete | Passed |
-| Child-thread inheritance | Complete | Parent CPU0 with child CPU1 passed |
-| Spawned-process inheritance | Complete | Parent CPU0 with child CPU1 passed |
-| Reject invalid CPU masks | Complete | Kernel rejection and unchanged masks passed |
-| Thread names and scheduling readback | Complete | Named FIFO threads and declared priorities passed |
-| Isolated hold/continue and exit-event diagnostics | Test coverage complete | All assertions passed; forced holds are not production throttling |
-| Separate critical, NC1 and NC2 processes | Complete in pg-runtime | Distinct PIDs and CPU1/2/3 verified |
-| Supervisor, coordinator, manager, enforcer and watchdog CPU0 placement | Complete | READY logs and target assertions passed; enforcer FIFO priority 24 |
-| Thermal monitor CPU0 inheritance | Complete | Quiet onboard-reader run passed |
-| Strict readiness and no ordinary-scheduling fallback | Complete | Successful configured startup verified; negative permission test remains |
-| Noncritical gates, absolute leases and causal ACKs | Complete | Nominal restriction/recovery passed |
-| Immediate acknowledgement at completed-work boundary | Complete | Nominal 20 ms restriction score passed after timing fix |
-| NC2-first restriction and NC1-first restoration | Complete | Ramp/freeze restriction order checked; raw effect timestamps retained |
-| Independent watchdog heartbeat | Complete | Manager and watchdog stall/restore assertions passed on corrected build |
-| Confirmation independent of telemetry manager | Complete in pg-enforcer | 30/30 manager-stall confirmations received before manager resume |
-| Separate manager-progress expiry and immutable supervisor receipt | Complete | Pi regression checks expiry, heartbeat replay rejection and first-receipt timing; 4 host audit tests pass |
-| Genuine per-core CPU input | Complete in pg-runtime | Idle thread identity/mapping and counter validity passed |
-| Declared CPU utilization window | 100 ms sliding window, refreshed every 10 ms | Valid windows recorded; injected-load characterization still needs broader runs |
-| Fixed critical work and complete job reporting | Complete | 22,394 archived jobs across corrected fault and nominal runs; no gaps or misses |
-| High-resolution releases and bounded IPC | Complete | Target timing recorded; permissions must be qualified for deployment account |
-| Consolidated operator status | Complete in pg-runtime status | Target output verified |
-| Raw job/sample capture and analysis | Complete | CSV archive and percentile analysis verified |
-| Policy and scoring regression executable | Existing coverage retained | pg-check passed on target |
-| Debug and release builds | Complete | Both cross-build; release also passes compiler analysis with warnings treated as errors |
+| ThreadCtl runmask plus inheritance | Complete; original placement preserved | CPU0/1/2/3 readback and child-thread/process inheritance pass |
+| 64-bit query/exchange, restoration and invalid masks | Complete | All target assertions pass |
+| Thread naming, FIFO scheduling and strict readiness | Complete; no ordinary-scheduling fallback in split runtime | Target qualification passes; negative non-root test remains |
+| Isolated hold/continue and exit-event diagnostics | Diagnostic only; production uses cooperative gates | Target assertions pass |
+| Separate critical, NC1 and NC2 processes | Complete | Unique PIDs; critical CPU1/FIFO30, NC1 CPU2/FIFO10, NC2 CPU3/FIFO8 |
+| Independent enforcer | Retained; sole authorized split-runtime grant sender | Remains alive through manager and supervisor stalls |
+| Manager progress and immutable receipt | Retained; progress timeout remains 50 ms | 30/30 one-second manager stalls confirm before resume, worst 12.135167 ms from expiry |
+| Complete critical-job delivery | Retained full ring and batch protocol; original source IDs | 21601 raw jobs, zero gaps/misses; max 1.148518 ms against 5 ms |
+| Restarted manager cursor and heartbeat sequence | Fixed; resume supervisor-accepted job ID and sequence | Ten manager restarts with zero missing job records |
+| CPU input and utilization window | Measured per-core idle clocks, 100 ms sliding window refreshed every 10 ms | Idle identity/mapping and valid windows pass |
+| Temperature freshness and simulated judging scenarios | Existing 150 ms expiry preserved | Ramp, real CPU spike, freeze and staged recovery pass |
+| NC2-first restriction and NC1-first restoration | Original split-runtime ordering retained | Current target assertions pass; raw effects retained |
+| Nonblocking supervisor progress observation | New lock-free shared mapping; publish at least every 100 ms, check every 50 ms | Supervisor SIGSTOP test passes while receive loop is stopped |
+| Persistent watchdog forced-off | New immutable latch at 200 ms lost progress; ordinary grants cannot clear it | Observed off/latch by 235.188630 ms from last progress; remains off after resume |
+| Legacy manual admission after unqualified startup | Reject positive commands and enforce the latch at every worker boundary | Cold-start test without a policy epoch passes |
+| Watchdog heartbeat loss | Existing independent lease/readiness protection retained | One-second watchdog stall closes workers and recovers after resumption |
+| Legacy bounded compute and cap wake-ups | Teammate's 500 us chunks and monotonic condition wake-ups retained | Handoff, B/C/A smoke and legacy watchdog-fault tests pass |
+| Benchmark failure propagation | Fixed: missed jobs and B/C budget violations fail the suite | Negative host/target qualification tests and positive Pi smoke tests pass |
+| Benchmark build integration | Fixed includes, feature definitions, dependencies and asset ordering | Root debug/release, default/handoff/overhead/HAM-suite builds pass |
+| Operator CLI and labelled source | Existing status retained; FORCED_OFF explicitly reported | Current target output and CLI assertions pass |
 
-CPU affinity excludes our workers from the critical worker's CPU. It does not
-reserve the entire CPU against OS threads, interrupts or unrelated processes.
+Affinity limits where our workers execute. OS work, interrupts and shared cache
+contention remain possible on those CPUs. It is not a CPU reservation or power
+measurement.
 
 ## Five scored metrics
 
-Current captures are `results/manager-stall-fix/repeat30/` (30 manager stalls
-and watchdog fault) and `results/manager-stall-fix/nominal/` (spike, ramp, freeze
-and recovery). Target directories are `threadctl-results-21635128` and
-`threadctl-results-24981558` under `/tmp/pg-manager-stall-2111`.
-
-| Metric | Current evidence | What is still pending |
+| Metric | Current evidence | Still pending |
 | --- | --- | --- |
-| Detection to effective restriction | PASS: 37 scored restrictions across fault and nominal regressions, 0 late/unconfirmed; worst effect latency 11.958 ms. Stricter supervisor-receipt latency also passes: worst 12.856777 ms. Manager-stall subset: 30/30, worst receipt 11.653796 ms | Broader matched-load and interruption tests; other failure paths |
-| Critical deadline misses | 0 misses in 22,394 archived jobs; max response 1.179685 ms against 5 ms. Fault-run response p99 0.643685 ms | Long-duration soak, actual application control algorithm, adversarial IRQ/system load |
-| Thermal/workload overshoot | Score: simulated thermal 0.0 C in ramp run; real CPU worst 6 percentage points across runs; estimated-demand index 2 points, in existing 100 ms windows | Real thermal peak/cooldown capture; declared acceptable overshoot bounds |
-| State-transition jitter | Current nominal regression: Normal-to-Warning spread 0.768 ms, n=2. Prior revision baseline: 5.099 ms, n=30 | Repeat the full nominal 30-trial series with the independent enforcer; declare acceptance bound and cover other transitions |
-| Controlled restoration | Worst 3,057.432 ms across 35 current fault/nominal recoveries, including declared 2 s plus 1 s dwell | Longer repeated fault/recovery characterization and accepted maximum additional delay |
+| Detection to effective restriction and receipt | Pre-B5: 36 confirmed, zero late/unconfirmed; worst effect 13.820500 ms and receipt 14.798204 ms. Manager-stall subset: 30/30, worst receipt 12.135167 ms | Broader matched-load/interruption and failure-path characterization |
+| Critical deadline misses | 21601 archived current-build jobs; zero gaps, invalid timestamps, period errors or misses; maximum 1.148518 ms | Long soak, real control algorithm, deliberate skipped-release failure and adversarial IRQ/system load |
+| Thermal/workload overshoot | Existing 100 ms score windows: simulated thermal 0.0 C, CPU 6 percentage points, estimated demand 2 points | Real thermal peak/cooldown through 5 s after restriction; accepted bounds |
+| State-transition jitter | Normal-to-Warning spread 2.051 ms, n=2 | Full repeated matched-phase series against the PRD bound; other transitions |
+| Controlled restoration | Worst 3057.061 ms across 35 recoveries, including 2 s + 1 s observation | More recovery cycles and boundary-phase fault tests |
 
-The current nominal scorecard contains 6,032 reported jobs and its archive
-contains 6,031 because reads end at different instants. The stall-run archive
-and scorecard both contain 16,363 jobs. Each raw archive is contiguous from ID 1;
-both scorecards report zero missing records. These are separately scoped counts.
+The 20 ms receipt origin is a qualifying sampled threshold or an input/progress
+expiry. The manager timeout is still 50 ms; worst manager pause-to-receipt is
+61.314777 ms. CPU injection also includes the declared utilization window.
 
-The prior nominal 30-trial baseline is `results/threadctl-pi-validation/repeat30/` and target
-`threadctl-results-14065727`. Its scorecard read contains 13,689 reported jobs;
-the recorder continued through ID 13,690. Neither stream reports a gap.
+Stopping the supervisor itself is a separate B5 fault. Its receive loop cannot
+accept an effect while stopped. The combined post-B5 score retains
+1 late restriction, worst 959.400 ms. This is not hidden or
+substituted for the pre-B5 result. B5 passes its independent 270 ms gate/latch
+oracle and preserves complete critical jobs. A full new run is required to
+restore capacity after this watchdog trip.
 
-The quiet thermal characterization acquired all 120 planned real endpoint reads
-over 3 s at 25 ms intervals, with zero missing slots, overflows, read errors or
-invalid CPU windows. Its sampler plus receiver used approximately 0.127% of one
-core during this short quiet run. This is not the total stack's CPU overhead.
+## Overhead and historical evidence
 
-The 20 ms metric begins at a qualifying sampled threshold, sensor expiry or
-manager-progress expiry. The manager timeout remains 50 ms; worst observed
-SIGSTOP-to-receipt was 61.251740 ms, while expiry-to-receipt was below 20 ms.
-A CPU injection also includes the declared 100 ms utilization window. These
-results do not claim 20 ms from arbitrary fault or load injection.
+The fresh legacy smoke comparison uses one approximately 2 s window per mode:
+B 0.47866%, C 0.45279%, A 99.91499% of one core. C sends 75% fewer notices than B.
+All three windows have zero critical misses/gaps. These are short regression
+measurements, not full overhead qualification or a C-versus-B CPU saving claim.
+They exclude a real sensor and do not include the split runtime's enforcer.
 
-## Fault evidence and remaining testing
+The imported teammate archive contains a nine-window quiet replay comparison
+and reports 54,000 releases with zero misses; its complete per-job overhead
+traces are not bundled. Its final raw handoff file has 1,334 records and a
+1.877203 ms maximum, correcting the DOCX's 1.740 ms. See the integration report
+for provenance and the initial failed cross-runtime probe retained during this
+integration.
 
-An earlier integrated capture (`results/threadctl-pi-validation/integration/`)
-passed ramp/spike/freeze and both service-stall assertions, with 10,176 archived
-critical jobs and zero misses/gaps. Its combined restriction score **failed**:
-13 confirmed, 2 late, worst 1,029.211 ms. This capture deliberately paused the
-manager and watchdog for one second and used an earlier timing configuration.
-It is retained as fault evidence, not substituted for the final nominal score.
+The earlier ThreadCtl validation and 30 manager-stall results at `b62852e`
+remain historical baselines in [the previous stall report](manager-stall-fix-validation.md).
+The quiet real-thermal characterization previously acquired all 120 planned
+reads over 3 s without errors; that validates the reader, not an integrated
+real-temperature control loop or total-stack overhead.
 
-The previous revision's fault-only capture is `results/threadctl-pi-validation/faults/`
-and target `threadctl-results-19492928`. Manager-stop and watchdog-stop both
-closed the workers; both recovered to Normal after resuming and satisfying the
-clear observation. All assertions passed, with 1,619 archived critical jobs,
-zero gaps/misses and maximum response 1.285759 ms. Its 20 ms restriction score
-**failed** during deliberate service suspension: 2 confirmed, 1 late,
-worst 967.984 ms. That failure is retained as the before-fix baseline.
-The corrected independent enforcer now confirms effects while the manager is
-stopped, with the 30-trial passing results above. Effect reporting cannot renew
-manager progress or clear its fault. Recovery still requires fresh progress,
-valid telemetry and the original continuous dwell.
+## Remaining delivery checks
 
-- [x] Four CPU affinity checks and child inheritance on the actual Pi.
-- [x] Invalid-mask and mask-restoration assertions on the actual Pi.
-- [x] Gradual simulated temperature ramp and ordered restriction.
-- [x] Real noncritical CPU-load spike with labelled simulated temperature.
-- [x] Stale-temperature fail-safe and staged restoration.
-- [x] Real onboard endpoint read in quiet characterization mode.
-- [x] Archive prior 30 nominal-spike trials and the new 30 manager-stall trials.
-- [x] Recheck manager/watchdog stalls on the final timing configuration.
-- [x] Fix manager-stall confirmation within 20 ms of its declared progress expiry and verify receipt before SIGCONT in 30 Pi trials.
-- [ ] Repeat the nominal 30-trial transition series with the new enforcer and freeze a jitter acceptance bound.
-- [ ] Test worker death, coordinator crash/hang and restart/requalification.
-- [ ] Test enforcer crash/hang, takeover/requalification and its independent lease-expiry path.
-- [ ] Test affinity/scheduling failure under the intended non-root account and abilities.
-- [ ] Verify physical LEDs, wiring and correspondence to the CLI.
-- [ ] Integrate one real thermal producer with the separate-process stack; current judging scenarios use a simulated temperature producer.
-- [ ] Validate frozen-conversion handling against the actual sensor's conversion identity; repeated file reads alone do not establish fresh conversions.
-- [ ] Capture real thermal overshoot through the post-restriction peak and cooldown.
-- [ ] Freeze acceptable jitter, overshoot and extra-restoration bounds.
-- [ ] Run a longer critical-task soak with representative system interference.
-- [ ] Qualify total stack supervision CPU overhead, rather than treating the monitor-only measurement as a system result.
-- [ ] Run a matched comparison to quantify affinity's effect; no improvement claim from affinity alone.
-- [ ] Validate the Pi 5/BSP separately.
+- [ ] Repeat the full ABC/BCA/CAB overhead series with corrected failure gates and archive every job trace.
+- [ ] Measure total split-stack monitoring/management overhead, including the enforcer and actual thermal adapter, against the 2% budget.
+- [ ] Integrate one real thermal producer and qualify physical conversion freshness, read age and frozen-conversion handling.
+- [ ] Capture physical thermal peak/cooldown and set acceptable overshoot bounds.
+- [ ] Repeat the matched-phase transition series and qualify the PRD jitter bound.
+- [ ] Repeat recovery interruption at 1.99 s and immediately after NC1 resumes.
+- [ ] Validate physical LEDs, wiring, and all five states against CLI output.
+- [ ] Exercise worker death, coordinator crash/hang, enforcer crash/hang and complete restart/requalification.
+- [ ] Deny required affinity/scheduling/high-resolution abilities under the deployment account and verify loads remain disarmed.
+- [ ] Run representative long-duration critical-load and IRQ/system-interference soak.
+- [ ] Deliberately overrun acquisition/control releases and require the test to fail.
+- [ ] Run a matched affinity comparison before claiming an improvement caused by placement.
+- [ ] Qualify Pi 5/BSP separately.
+- [ ] Optional: activate HAM and prove automatic restarts in a separately scoped trial; only HAM-suite compilation was checked here.
 
-Hardware power metering and dynamic frequency control remain optional stretch
-goals and are not part of this ThreadCtl implementation.
+Hardware power metering and dynamic frequency control remain optional stretch goals.
