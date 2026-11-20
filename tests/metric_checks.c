@@ -1,8 +1,14 @@
 #include "metrics.h"
+#include "bridge.h"
 #include <stdio.h>
 #include <stdlib.h>
 #define REQUIRE(x) do { if (!(x)) { fprintf(stderr,"metric check failed at line %d: %s\n",__LINE__,#x); exit(1); } } while (0)
 void metric_checks(void) {
+    REQUIRE(pg_bench_state_from_policy(NORMAL) == PG_ST_NORMAL);
+    REQUIRE(pg_bench_state_from_policy(WARNING) == PG_ST_WARNING);
+    REQUIRE(pg_bench_state_from_policy(THROTTLED) == PG_ST_THROTTLED);
+    REQUIRE(pg_bench_state_from_policy(CRITICAL) == PG_ST_CRITICAL);
+    REQUIRE(pg_bench_state_from_policy(RECOVERY) == PG_ST_RECOVERY);
     pg_metrics m={0};
     pg_policy p={0};
     pg_status *s=&p.status;

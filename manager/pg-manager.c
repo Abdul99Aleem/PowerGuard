@@ -1,7 +1,7 @@
 /* QNX bridge: pgbench telemetry and worker ACKs <-> PowerGuard policy IPC. */
 #define _POSIX_C_SOURCE 200809L
+#include "bridge.h"
 #include "ipc.h"
-#include "pgbench_protocol.h"
 #include <errno.h>
 #include <signal.h>
 #include <stdint.h>
@@ -88,7 +88,8 @@ int main(void) {
             last_decision = want->decision_id;
         }
         int recovery = want->state == RECOVERY ? (int)want->nc1_pct : 0;
-        if (!bench_send(bench_coid, PG_CMD_STATE, (int)want->state, recovery, &bench)) {
+        if (!bench_send(bench_coid, PG_CMD_STATE,
+                        pg_bench_state_from_policy((enum pg_state)want->state), recovery, &bench)) {
             perror("pgbench state"); result = 1; break;
         }
         if (bench.nc1_cap_pct == (int)want->nc1_pct && bench.nc2_cap_pct == (int)want->nc2_pct &&

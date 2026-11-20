@@ -68,6 +68,17 @@ Include `pgbench_protocol.h` in an external QNX process. Use `name_open(PG_BENCH
 
 Supervisor should send LEVEL **after its own real policy decision**, not based on a simulated state command. To measure true limit-detection-to-enforcement latency, timestamp sensor-trigger detection in the supervisor, then combine it with a later worker-ACK timestamp using the **same CLOCK_MONOTONIC base**; `last_actuation_us` in this MVP is **receipt of LEVEL to worker acknowledgement**, not detection-to-throttling. The protocol reserves `detection_to_actuation_us` but this MVP leaves it zero until actual supervisor timestamps are integrated.
 
+## Live dashboard
+
+With `pgbench serve` running, launch `./pgbench dashboard` from an interactive
+terminal. It continuously shows the required simulated temperature and sensor
+age, CPU, NC1/NC2 caps, policy state, recovery progress, critical timing and
+worker acknowledgement timing. Use Up/Down to select Normal, Ramp, Spike or
+Freeze; press Enter to apply the selected scenario and `q` to quit. The
+dashboard changes testbench scenarios through QNX IPC, so it remains compatible
+with `pg-manager`; do not inject competing numeric samples through `pg-console`
+while the manager is running.
+
 ## Measurement definitions and limitations
 
 - Critical job: 20 ms release period, 20 ms relative deadline, ~1 ms busy work. `max_response_us` measures planned release → completion and `max_jitter_us` measures planned release → actual start. Misses are jobs completed after their deadlines. If the worker falls behind enough to skip releases, skipped releases are not currently counted; do not present miss count as a hard worst-case guarantee.

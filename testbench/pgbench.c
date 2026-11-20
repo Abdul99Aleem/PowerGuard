@@ -9,6 +9,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <termios.h>
 #include <time.h>
 #include <unistd.h>
 #include <sys/neutrino.h>
@@ -271,7 +272,42 @@ static void print_status(const pg_status_t *s) {
       s->last_actuation_us, s->recovery_to_full_ms);
 }
 static void usage(const char *argv0) {
-    fprintf(stderr, "Usage:\n  %s serve [csv_file]\n  %s status\n  %s scenario normal|ramp|spike|freeze\n  %s level 0|1|2\n  %s state unknown|normal|warning|throttled|critical|recovery [progress_0_to_100]\n  %s stop\n", argv0,argv0,argv0,argv0,argv0,argv0);
+    fprintf(stderr, "Usage:\n  %s serve [csv_file]\n  %s status\n  %s dashboard\n  %s scenario normal|ramp|spike|freeze\n  %s level 0|1|2\n  %s state unknown|normal|warning|throttled|critical|recovery [progress_0_to_100]\n  %s stop\n", argv0,argv0,argv0,argv0,argv0,argv0,argv0);
+}
+static int dashboard_send(int coid, unsigned command, int arg, pg_status_t *reply) {
+    pg_request_t req = {PG_BENCH_TYPE, PG_BENCH_VERSION, command, arg, 0};
+    if (MsgSend(coid, &req, sizeof(req), reply, sizeof(*reply)) == -1) { perror("MsgSend"); return 0; }
+    if (reply->error) { fprintf(stderr, "pgbench error: %s\n", strerror(reply->error)); return 0; }
+    return 1;
+}
+static void dashboard(int coid) {
+    static const char *names[] = {"normal", "ramp", "spike", "freeze"};
+    struct termios saved, raw;
+    if (tcgetattr(STDIN_FILENO, &saved) == -1) { perror("tcgetattr (use a terminal)"); return; }
+    raw = saved;
+    raw.c_lflag &= (tcflag_t)~(ICANON | ECHO);
+    raw.c_cc[VMIN] = 1; raw.c_cc[VTIME] = 0;
+    if (tcsetattr(STDIN_FILENO, TCSANOW, &raw) == -1) { perror("tcsetattr"); return; }
+    int selected = PG_SC_NORMAL;
+    for (;;) {
+        pg_status_t reply;
+        if (!dashboard_send(coid, PG_CMD_STATUS, 0, &reply)) break;
+        printf("\033[2J\033[HPOWERGUARD LIVE DASHBOARD\nUp/Down: choose scenario | Enter: apply | q: quit\n\n");
+        print_status(&reply);
+        printf("\nSelected scenario: %s%s\n", names[selected], selected == reply.scenario ? " (active)" : "");
+        fflush(stdout);
+        int c = getchar();
+        if (c == 'q' || c == 'Q') break;
+        if (c == 27 && getchar() == '[') {
+            c = getchar();
+            if (c == 'A' && selected < PG_SC_FREEZE) ++selected;
+            else if (c == 'B' && selected > PG_SC_NORMAL) --selected;
+        } else if (c == '\r' || c == '\n') {
+            (void)dashboard_send(coid, PG_CMD_SCENARIO, selected, &reply);
+        }
+    }
+    (void)tcsetattr(STDIN_FILENO, TCSANOW, &saved);
+    puts("\033[2J\033[H");
 }
 int main(int argc, char **argv) {
     if (argc >= 2 && !strcmp(argv[1], "serve")) {
@@ -280,6 +316,13 @@ int main(int argc, char **argv) {
         return 0;
     }
     if (argc < 2) { usage(argv[0]); return 2; }
+    if (!strcmp(argv[1], "dashboard")) {
+        int coid = name_open(PG_BENCH_NAME, 0);
+        if (coid == -1) { perror("name_open (is pgbench serve running?)"); return 1; }
+        dashboard(coid);
+        name_close(coid);
+        return 0;
+    }
     pg_request_t req = { PG_BENCH_TYPE, PG_BENCH_VERSION, PG_CMD_STATUS, 0, 0 };
     if (!strcmp(argv[1], "status")) {}
     else if (!strcmp(argv[1], "stop")) req.command = PG_CMD_STOP;
