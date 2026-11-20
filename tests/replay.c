@@ -29,15 +29,17 @@ static void step(rig *r, int update_thermal) {
                (unsigned long long)(r->now/PG_MS), names[s.state],s.nc1_pct,s.nc2_pct,s.causes);
 }
 static void run(rig *r, unsigned ticks) { while (ticks--) step(r, 1); }
+/* Enough ticks for a full recovery from Critical, with a little slack. */
+#define RECOVER_TICKS ((unsigned)((PG_RESTORE_NC1 + PG_RESTORE_NC2) / PG_TICK) + 10)
 static rig baseline(void) {
     rig r = {0};
     r.now = PG_MS;
     pg_init(&r.p,r.now);
-    CHECK(r.p.status.state == CRITICAL && r.p.status.stage == 4);
+    CHECK(r.p.status.state == CRITICAL && r.p.status.stage == CRITICAL);
     r.in.temp_deci_c = 500;
     r.in.quality = GOOD;
     r.in.source = SIMULATED;
-    run(&r,270);
+    run(&r,RECOVER_TICKS);
     CHECK(r.p.status.state == NORMAL);
     return r;
 }
@@ -66,10 +68,10 @@ static void limit_boundaries(void) {
         {PG_CPU_WARN, PG_CPU_THROTTLE, PG_CPU_CRITICAL},
         {PG_POWER_WARN, PG_POWER_THROTTLE, PG_POWER_CRITICAL},
     };
-    static const unsigned stage[3] = {1, 2, 4};
+    static const unsigned stage[3] = {WARNING, THROTTLED, CRITICAL};
     for (int signal = 0; signal < 3; ++signal)
         for (int level = 0; level < 3; ++level) {
-            unsigned below = level ? stage[level - 1] : 0;
+            unsigned below = level ? stage[level - 1] : NORMAL;
             CHECK(stage_for(signal, limit[signal][level] - 1) == below);
             CHECK(stage_for(signal, limit[signal][level]) == stage[level]);
         }
@@ -82,7 +84,7 @@ static void simultaneous_faults(void) {
     set_signal(&r, SIGNAL_CPU, PG_CPU_CRITICAL);
     set_signal(&r, SIGNAL_POWER, PG_POWER_WARN);
     step(&r, 1);
-    CHECK(r.p.status.stage == 4 && r.p.status.state == CRITICAL);
+    CHECK(r.p.status.stage == CRITICAL && r.p.status.state == CRITICAL);
     CHECK(r.p.status.causes == (TEMP | CPU | POWER));
 }
 
@@ -92,7 +94,7 @@ static void power_index(void) {
     r.in.nc_demand_pct[0] = 20; r.in.nc_demand_pct[1] = 90;
     /* J2: 62 is a Warning pre-alarm, below the actionable Throttled limit. */
     step(&r, 1);
-    CHECK(r.p.status.power_index == 62 && r.p.status.causes == POWER && r.p.status.stage == 1);
+    CHECK(r.p.status.power_index == 62 && r.p.status.causes == POWER && r.p.status.stage == WARNING);
     r.in.nc_demand_pct[0] = 25; r.in.nc_demand_pct[1] = 25;
     step(&r, 1); CHECK(r.p.status.power_index == 25);
     r.in.nc_demand_pct[0] = 1; r.in.nc_demand_pct[1] = 0;
@@ -101,7 +103,94 @@ static void power_index(void) {
     r.in.core_busy_pct[0] = 40;
     r.in.nc_demand_pct[0] = r.in.nc_demand_pct[1] = 80;
     step(&r, 1);
-    CHECK(r.p.status.power_index == 80 && r.p.status.causes == POWER && r.p.status.stage == 2);
+    CHECK(r.p.status.power_index == 80 && r.p.status.causes == POWER && r.p.status.stage == THROTTLED);
+}
+
+/* Restoration timeline, in ms from the first all-clear sample. */
+typedef struct { uint64_t nc1_ms, full_ms, normal_ms; } timeline;
+
+static timeline clear_until_normal(rig *r) {
+    timeline t = {0, 0, 0};
+    r->in.temp_deci_c = PG_TEMP_CLEAR;
+    step(r, 1);
+    uint64_t start = r->now;
+    CHECK(r->p.status.clear_since_ns == start);
+    while (r->p.status.state != NORMAL) {
+        CHECK(r->now - start < 5000 * PG_MS);
+        step(r, 1);
+        uint64_t at = (r->now - start) / PG_MS;
+        if (!t.nc1_ms && r->p.status.nc1_pct == 100) t.nc1_ms = at;
+        if (!t.full_ms && r->p.status.nc2_pct == 100) t.full_ms = at;
+    }
+    t.normal_ms = (r->now - start) / PG_MS;
+    return t;
+}
+
+static rig after(int temp) {
+    rig r = baseline();
+    r.in.temp_deci_c = temp;
+    step(&r, 1);
+    return r;
+}
+
+/* J4: from Critical, NC1 returns at 2.0 s and NC2 a further 1.0 s later. */
+static void controlled_restoration(void) {
+    rig r = after(PG_TEMP_CRITICAL);
+    timeline t = clear_until_normal(&r);
+    CHECK(t.nc1_ms == 2000 && t.full_ms == 3000 && t.normal_ms <= 3100);
+
+    /* A one-sample excursion at 1.99 s restarts the whole wait. */
+    r = after(PG_TEMP_CRITICAL);
+    r.in.temp_deci_c = PG_TEMP_CLEAR;
+    step(&r, 1);
+    while (r.now - r.p.status.clear_since_ns < 1980 * PG_MS) step(&r, 1);
+    CHECK(r.p.status.nc1_pct == 0 && r.p.status.nc2_pct == 0);
+    r.in.temp_deci_c = PG_TEMP_CLEAR + 1;
+    step(&r, 1);
+    CHECK(r.p.status.state == CRITICAL && !r.p.status.clear_since_ns);
+    t = clear_until_normal(&r);
+    CHECK(t.nc1_ms == 2000 && t.full_ms == 3000);
+
+    /* An excursion just after NC1 reopens closes it again. */
+    r = after(PG_TEMP_CRITICAL);
+    r.in.temp_deci_c = PG_TEMP_CLEAR;
+    while (r.p.status.nc1_pct == 0) step(&r, 1);
+    CHECK(r.p.status.state == RECOVERY && r.p.status.nc2_pct == 0);
+    r.in.temp_deci_c = PG_TEMP_CLEAR + 1;
+    step(&r, 1);
+    CHECK(r.p.status.state == CRITICAL && r.p.status.nc1_pct == 0);
+}
+
+/* From Throttled NC1 is already open, but NC2 still waits the full 3.0 s. */
+static void throttled_restoration(void) {
+    rig r = after(PG_TEMP_THROTTLE);
+    CHECK(r.p.status.state == THROTTLED && r.p.status.nc1_pct == 100 && r.p.status.nc2_pct == 0);
+    timeline t = clear_until_normal(&r);
+    CHECK(t.full_ms == 3000 && t.normal_ms <= 3100);
+
+    /* A cancel returns to Throttled without reissuing the same caps. */
+    r = after(PG_TEMP_THROTTLE);
+    r.in.temp_deci_c = PG_TEMP_CLEAR;
+    run(&r, 100);
+    uint64_t id = r.p.status.decision_id;
+    CHECK(r.p.status.state == RECOVERY);
+    r.in.temp_deci_c = PG_TEMP_CLEAR + 1;
+    step(&r, 1);
+    CHECK(r.p.status.state == THROTTLED && r.p.status.decision_id == id);
+}
+
+/* Warning sheds nothing, so it returns straight to Normal after 2.0 s. */
+static void warning_return(void) {
+    rig r = after(PG_TEMP_WARN);
+    CHECK(r.p.status.state == WARNING && r.p.status.nc1_pct == 100 && r.p.status.nc2_pct == 100);
+    r.in.temp_deci_c = PG_TEMP_CLEAR + 1; /* in the gap: Warning holds */
+    run(&r, 300);
+    CHECK(r.p.status.state == WARNING && !r.p.status.clear_since_ns);
+    r.in.temp_deci_c = PG_TEMP_CLEAR;
+    step(&r, 1);
+    uint64_t start = r.now;
+    while (r.p.status.state == WARNING) step(&r, 1);
+    CHECK(r.p.status.state == NORMAL && r.now - start == PG_WARNING_CLEAR);
 }
 
 void metric_checks(void);
@@ -113,22 +202,21 @@ int main(void) {
     r.in.temp_deci_c = PG_TEMP_WARN - 1; step(&r,1); CHECK(r.p.status.state == NORMAL);
     for (int t=PG_TEMP_WARN; t<=PG_TEMP_CRITICAL; t++) {
         r.in.temp_deci_c = t; step(&r,1);
-        CHECK(r.p.status.stage == (unsigned)(t>=PG_TEMP_CRITICAL ? 4 : t>=PG_TEMP_THROTTLE ? 2 : 1));
+        CHECK(r.p.status.stage == (unsigned)(t>=PG_TEMP_CRITICAL ? CRITICAL :
+                                             t>=PG_TEMP_THROTTLE ? THROTTLED : WARNING));
     }
     r.in.temp_deci_c = PG_TEMP_CLEAR;
-    run(&r,50); CHECK(r.p.status.stage == 4);
-    r.in.temp_deci_c = PG_TEMP_CLEAR + 1; step(&r,1); CHECK(!r.p.status.clear_since_ns);
+    run(&r,50); CHECK(r.p.status.state == RECOVERY && r.p.status.stage == CRITICAL);
+    r.in.temp_deci_c = PG_TEMP_CLEAR + 1; step(&r,1);
+    CHECK(r.p.status.state == CRITICAL && !r.p.status.clear_since_ns);
     r.in.temp_deci_c = PG_TEMP_CLEAR;
-    for (int stage=3; stage>=0; --stage) {
-        run(&r,50); CHECK(r.p.status.stage == (unsigned)(stage+1));
-        step(&r,1); CHECK(r.p.status.state == RECOVERY && r.p.status.stage == (unsigned)stage);
-    }
-    run(&r,51); CHECK(r.p.status.state == NORMAL);
+    run(&r,RECOVER_TICKS); CHECK(r.p.status.state == NORMAL);
 
     puts("SIMULATED  sudden CPU spike on one core");
     r.in.core_busy_pct[2] = 86; step(&r,1);
     CHECK(r.p.status.state == THROTTLED && r.p.status.causes == CPU);
-    r.in.core_busy_pct[2] = 0; run(&r,51); CHECK(r.p.status.stage == 1);
+    r.in.core_busy_pct[2] = 0; run(&r,51);
+    CHECK(r.p.status.state == RECOVERY && r.p.status.stage == THROTTLED);
     r.in.core_busy_pct[2] = 96; step(&r,1); CHECK(r.p.status.state == CRITICAL);
 
     r = baseline(); r.verbose = 1;
@@ -137,7 +225,7 @@ int main(void) {
     CHECK(r.p.status.state == NORMAL);
     step(&r,0); CHECK(r.p.status.state == CRITICAL && (r.p.status.causes & BAD_TEMP));
     r.in.quality = FROZEN; step(&r,1); CHECK(r.p.status.causes & BAD_TEMP);
-    r.in.quality = GOOD; run(&r,270); CHECK(r.p.status.state == NORMAL);
+    r.in.quality = GOOD; run(&r,RECOVER_TICKS); CHECK(r.p.status.state == NORMAL);
 
     r = baseline();
     r.in.nc_demand_pct[0] = r.in.nc_demand_pct[1] = 80;
@@ -152,7 +240,7 @@ int main(void) {
     r = baseline();
     r.in.core_busy_pct[0]=75;
     pg_ingest(&r.p,&r.in,r.now);
-    CHECK(r.p.status.stage == 1);
+    CHECK(r.p.status.stage == WARNING);
     pg_tick(&r.p,r.now+PG_RESPONSE_TARGET);
     CHECK(r.p.status.state == WARNING);
     pg_tick(&r.p,r.now+PG_RESPONSE_TARGET+1);
@@ -172,12 +260,15 @@ int main(void) {
     CHECK(r.p.status.state == CRITICAL && (r.p.status.causes & BAD_LOAD));
     r = baseline();
     r.in.core_busy_pct[1] = 85; step(&r,1);
-    CHECK(r.p.status.stage == 2);
+    CHECK(r.p.status.stage == THROTTLED);
     r.in.core_busy_pct[1] = 95; step(&r,1);
-    CHECK(r.p.status.stage == 4);
+    CHECK(r.p.status.stage == CRITICAL);
     limit_boundaries();
     simultaneous_faults();
     power_index();
+    controlled_restoration();
+    throttled_restoration();
+    warning_return();
     puts("PASS: host policy replay assertions");
     return 0;
 }

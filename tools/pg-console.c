@@ -83,7 +83,7 @@ static void display(const bench *b, const pg_status *before) {
     if (s->causes & BAD_TEMP) printf(" invalid-temperature");
     if (s->causes & BAD_LOAD) printf(" invalid-load");
     if (s->causes & WAIT_EFFECT) printf(" manager-timeout");
-    if (s->clear_since_ns) printf("  dwell=%.0f/500 ms",ms(s->as_of_ns-s->clear_since_ns));
+    if (s->clear_since_ns) printf("  clear for %.0f ms",ms(s->as_of_ns-s->clear_since_ns));
     puts("");
 }
 

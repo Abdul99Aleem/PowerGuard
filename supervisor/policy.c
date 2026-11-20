@@ -1,16 +1,13 @@
 #include "policy.h"
 #include <string.h>
 
-/* Background CPU caps, ordered from full service to maximum restriction. */
-static const struct {
-    enum pg_state state;
-    unsigned nc1_percent, nc2_percent;
-} stages[] = {
-    { NORMAL,    100, 100 },
-    { WARNING,   100,  50 },
-    { THROTTLED, 100,   0 },
-    { THROTTLED,  50,   0 },  /* halfway through restoring NC1 */
-    { CRITICAL,    0,   0 }
+/* Worker caps for each restriction level. The index is the state that applies
+   the level, and a higher level always leaves the workers less CPU. */
+static const struct { unsigned nc1, nc2; } caps[] = {
+    [NORMAL]    = {100, 100},
+    [WARNING]   = {100, 100}, /* pre-alarm: nothing is shed yet */
+    [THROTTLED] = {100,   0},
+    [CRITICAL]  = {  0,   0},
 };
 
 /* All three comparators include equality. Values in the gap hold the caps. */
@@ -20,9 +17,9 @@ static const limits cpu = {PG_CPU_CLEAR, PG_CPU_WARN, PG_CPU_THROTTLE, PG_CPU_CR
 static const limits power = {PG_POWER_CLEAR, PG_POWER_WARN, PG_POWER_THROTTLE, PG_POWER_CRITICAL};
 
 static unsigned severity(int value, limits l) {
-    if (value >= l.critical) return 4;
-    if (value >= l.throttle) return 2;
-    return value >= l.warn ? 1 : 0;
+    if (value >= l.critical) return CRITICAL;
+    if (value >= l.throttle) return THROTTLED;
+    return value >= l.warn ? WARNING : NORMAL;
 }
 
 int pg_activation_limit(unsigned signal, int value) {
@@ -40,61 +37,96 @@ int pg_recovery_ready(const pg_policy *p) {
            p->status.power_index <= (unsigned)power.clear;
 }
 
-static void set_stage(pg_status *s, unsigned stage, uint64_t now) {
-    s->stage = stage;
-    s->nc1_pct = stages[stage].nc1_percent;
-    s->nc2_pct = stages[stage].nc2_percent;
+/* Publish a new cap target. It counts only once the manager confirms it. */
+static void issue(pg_status *s, unsigned level, uint64_t now) {
+    s->stage = level;
+    s->nc1_pct = caps[level].nc1;
+    s->nc2_pct = caps[level].nc2;
     ++s->decision_id;
     s->issued_ns = now;
     s->effective_ns = 0;
+}
+
+/* Enter a restricting state. Caps are reissued only if their level changes. */
+static void restrict_to(pg_status *s, unsigned level, uint64_t now) {
+    if (level != s->stage) issue(s, level, now);
+    s->state = level;
     s->clear_since_ns = 0;
 }
 
-/* The supervisor FSM. A larger stage gives the background workers less CPU. */
-static void advance_fsm(pg_status *s, unsigned required_stage,
-                        int below_recovery_limits, uint64_t now) {
-    /* From any state, a fault or overload immediately enforces the tighter cap. */
-    if (required_stage != 0) {
-        if (required_stage > s->stage) set_stage(s, required_stage, now);
-        s->state = stages[s->stage].state;
+/* One tick of an unbroken recovery. NC1 returns after 2.0 s all-clear, NC2
+   once that is confirmed and another 1.0 s has passed, and Normal follows the
+   confirmation of full caps. */
+static void restore_step(pg_policy *p, uint64_t now) {
+    pg_status *s = &p->status;
+    if (!s->effective_ns) return; /* the previous step has not taken hold */
+    if (s->stage == NORMAL) {
+        s->state = NORMAL;
+        s->clear_since_ns = 0;
+        return;
+    }
+    if (!p->nc1_step_ns) {
+        if (now - s->clear_since_ns < PG_RESTORE_NC1) return;
+        /* Coming from Throttled, NC1 is already open. NC2 still waits. */
+        if (s->nc1_pct == 0) issue(s, THROTTLED, now);
+        p->nc1_step_ns = now;
+        return;
+    }
+    if (now - p->nc1_step_ns >= PG_RESTORE_NC2) issue(s, NORMAL, now);
+}
+
+/* The supervisor FSM (PRD page 7). required is the strictest level the inputs
+   ask for, and all_clear means every input is at or below its clear level. */
+static void advance_fsm(pg_policy *p, unsigned required, int all_clear, uint64_t now) {
+    pg_status *s = &p->status;
+
+    if (s->state == RECOVERY) {
+        /* Anything short of all-clear, or a dwell broken by missing data,
+           cancels the restoration. Fall back to the stricter of where it
+           began and what the inputs need now, which may close NC1 again. */
+        if (!all_clear || !s->clear_since_ns)
+            restrict_to(s, required > p->recovery_from ? required : p->recovery_from, now);
+        else
+            restore_step(p, now);
+        return;
+    }
+
+    /* A stricter level applies at once, directly from any state. */
+    if (required > s->state) {
+        restrict_to(s, required, now);
+        return;
+    }
+
+    /* In the gap above the clear levels, or with the last cap unconfirmed,
+       the current state holds and no recovery time accrues. */
+    if (!all_clear || !s->effective_ns || s->state == NORMAL) {
         s->clear_since_ns = 0;
         return;
     }
 
-    /* A release requires continuous headroom and confirmation of the last cap. */
-    if (!below_recovery_limits || !s->effective_ns) {
-        s->clear_since_ns = 0;
-        return;
-    }
-    if (s->state == NORMAL) return;
-    if (!s->clear_since_ns) s->clear_since_ns = now;
-    if (now - s->clear_since_ns < PG_DWELL) return;
-
-    switch (s->state) {
-    case CRITICAL:
-    case THROTTLED:
-    case WARNING:
-        s->state = RECOVERY;
-        set_stage(s, s->stage - 1, now);
-        break;
-    case RECOVERY:
-        if (s->stage > 0) {
-            set_stage(s, s->stage - 1, now);
-        } else {
+    if (s->state == WARNING) { /* nothing was shed, so no staged restore */
+        if (!s->clear_since_ns) s->clear_since_ns = now;
+        if (now - s->clear_since_ns >= PG_WARNING_CLEAR) {
+            issue(s, NORMAL, now);
             s->state = NORMAL;
             s->clear_since_ns = 0;
         }
-        break;
-    case NORMAL:
-        break;
+        return;
     }
+
+    /* Throttled or Critical: the first all-clear sample starts recovery.
+       The caps stay where they are while the dwell runs. */
+    p->recovery_from = s->state;
+    p->nc1_step_ns = 0;
+    s->state = RECOVERY;
+    s->clear_since_ns = now;
 }
 
 void pg_init(pg_policy *p, uint64_t now) {
     memset(p, 0, sizeof(*p));
     p->status.epoch = now;
     p->status.state = CRITICAL;
-    set_stage(&p->status, 4, now);
+    issue(&p->status, CRITICAL, now);
     pg_tick(p, now);
 }
 
@@ -153,7 +185,7 @@ void pg_tick(pg_policy *p, uint64_t now) {
     pg_status *s = &p->status;
     const pg_sample *in = &p->sample;
     int peak = 0;
-    unsigned required = 0, causes = 0;
+    unsigned required = NORMAL, causes = 0;
     if (now - p->last_eval_ns > PG_CPU_MAX_AGE) {
         s->clear_since_ns = 0;
         p->healthy_since_ns = 0;
@@ -191,18 +223,18 @@ void pg_tick(pg_policy *p, uint64_t now) {
         if (bands[i]) causes |= flags[i];
         if (bands[i] > required) required = bands[i];
     }
-    if (causes & (BAD_TEMP | BAD_LOAD)) required = 4;
+    if (causes & (BAD_TEMP | BAD_LOAD)) required = CRITICAL;
     if (s->effective_ns && now - p->manager_seen_ns >= PG_LEASE) {
-        set_stage(s, 4, now);
+        issue(s, CRITICAL, now);
         causes |= WAIT_EFFECT;
-        required = 4;
+        required = CRITICAL;
     }
     if (!s->effective_ns && now - s->issued_ns > PG_RESPONSE_TARGET) {
         causes |= WAIT_EFFECT;
-        required = 4;
+        required = CRITICAL;
     }
     s->causes = causes;
     if (!pg_recovery_ready(p)) p->healthy_since_ns = 0;
     else if (!p->healthy_since_ns) p->healthy_since_ns = now;
-    advance_fsm(s, required, pg_recovery_ready(p), now);
+    advance_fsm(p, required, pg_recovery_ready(p), now);
 }

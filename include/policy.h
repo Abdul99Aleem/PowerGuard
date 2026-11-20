@@ -7,9 +7,13 @@
 #define PG_TICK (10 * PG_MS)
 #define PG_TEMP_MAX_AGE (250 * PG_MS)
 #define PG_CPU_MAX_AGE (50 * PG_MS)
-#define PG_DWELL (500 * PG_MS)
 #define PG_LEASE (50 * PG_MS)
 #define PG_RESPONSE_TARGET (20 * PG_MS) /* experimental until frozen on Pi */
+
+/* Continuous all-clear time before capacity returns (PRD page 7). */
+#define PG_WARNING_CLEAR (2000 * PG_MS) /* Warning straight back to Normal */
+#define PG_RESTORE_NC1 (2000 * PG_MS)   /* recovery: NC1 reopens */
+#define PG_RESTORE_NC2 (1000 * PG_MS)   /* then NC2, after NC1 is confirmed */
 
 /* Limits for each input (PRD page 7). Temperature is in tenths of a degree C,
    U is the busiest core in percent and P is the 0..100 demand index.
@@ -42,7 +46,8 @@ typedef struct {
 typedef struct {
     uint64_t epoch, decision_id, issued_ns, lease_until_ns, as_of_ns;
     uint64_t effective_ns, clear_since_ns;
-    uint32_t state, stage, causes, cpu_peak_pct, power_index;
+    uint32_t state, causes, cpu_peak_pct, power_index;
+    uint32_t stage; /* cap level being applied, numbered like the states */
     uint32_t nc1_pct, nc2_pct; /* maximum fraction of each nominal budget */
 } pg_status;
 typedef struct {
@@ -50,6 +55,8 @@ typedef struct {
     pg_sample sample;
     uint64_t last_eval_ns, manager_seen_ns;
     uint64_t healthy_since_ns;
+    uint64_t nc1_step_ns; /* when this recovery passed its NC1 step */
+    unsigned recovery_from; /* Throttled or Critical, restored on a cancel */
     int have_sample, bad_sequence;
 } pg_policy;
 void pg_init(pg_policy *p, uint64_t now);
