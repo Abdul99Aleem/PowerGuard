@@ -47,7 +47,7 @@ int main(void) {
     signal(SIGINT, stop);
     signal(SIGTERM, stop);
 
-    uint64_t last_bench_job = 0, reported_job = 0;
+    uint64_t last_bench_job = 0;
     int last_state = PG_ST_UNKNOWN, last_recovery = -1;
     puts("pg-manager connected: telemetry, caps, effects, state and jobs are bridged");
     while (running) {
@@ -96,9 +96,12 @@ int main(void) {
             last_state = state;
             last_recovery = recovery;
         }
-        if (grant_accepted && bench.applied_epoch == want->epoch && bench.applied_decision_id == want->decision_id &&
+        int caps_applied = grant_accepted && bench.applied_epoch == want->epoch &&
+            bench.applied_decision_id == want->decision_id &&
             bench.nc1_cap_pct == (int)want->nc1_pct && bench.nc2_cap_pct == (int)want->nc2_pct &&
-            bench.last_effective_ns >= want->issued_ns) {
+            bench.last_effective_ns >= want->issued_ns;
+        int waiting_for_critical = grant_accepted && want->state == CRITICAL && !caps_applied;
+        if (caps_applied) {
             memset(&msg, 0, sizeof(msg));
             msg.type = PG_EFFECT; msg.version = PG_VERSION;
             msg.body.effect.epoch = want->epoch;
@@ -108,16 +111,13 @@ int main(void) {
             msg.body.effect.nc2_pct = want->nc2_pct;
             if (!policy_send(policy_coid, &msg, &decision) && errno != EINVAL) { perror("PowerGuard effect"); result = 1; break; }
         }
-        /* The manager may attach after pgbench has already run jobs.  Treat
-           that first observed ID as a baseline; later source-ID jumps remain
-           visible as gaps in the supervisor scorecard. */
-        if (!last_bench_job) last_bench_job = bench.last_job_id;
-        else if (bench.last_job_id > last_bench_job) {
-            reported_job += bench.last_job_id - last_bench_job;
+        /* Keep pgbench's release IDs across manager restarts. This also
+           lets the scorecard count releases that the manager did not see. */
+        if (bench.last_job_id > last_bench_job) {
             memset(&msg, 0, sizeof(msg));
             msg.type = PG_JOB; msg.version = PG_VERSION;
             msg.body.job.epoch = decision.decision.epoch;
-            msg.body.job.id = reported_job;
+            msg.body.job.id = bench.last_job_id;
             msg.body.job.release_ns = bench.last_job_release_ns;
             msg.body.job.deadline_ns = pg_job_budget_ns(bench.last_job_release_ns,
                                                         bench.last_job_deadline_ns);
@@ -126,7 +126,8 @@ int main(void) {
             last_bench_job = bench.last_job_id;
         }
 
-        struct timespec pause = {.tv_nsec = PG_TICK};
+        /* Check pending Critical effects before the next normal telemetry tick. */
+        struct timespec pause = {.tv_nsec = waiting_for_critical ? PG_MS : PG_TICK};
         while (running && nanosleep(&pause, &pause) == -1 && errno == EINTR) {}
     }
     name_close(bench_coid);
