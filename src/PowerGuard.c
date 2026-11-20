@@ -1,5 +1,6 @@
 /* K's single-owner policy service. Only local same-ABI clients use this draft. */
 #include "ipc.h"
+#include "progress.h"
 #include <errno.h>
 #include <sched.h>
 #include <signal.h>
@@ -67,11 +68,20 @@ int main(int argc, char **argv) {
         pulse_timer(coid, (int)priority, PULSE_AGE, &age_timer) == -1) {
         perror("policy timers"); return 1;
     }
+    pg_progress *shared = pg_progress_open(1);
+    if (!shared) { perror("progress shm"); return 1; }
     pg_metrics metrics = {0};
     pg_policy policy;
     pg_init(&policy, monotonic_ns());
-    uint64_t armed_deadline = 0;
+    pg_store(&shared->epoch, policy.status.epoch);
+    uint64_t armed_deadline = 0, progress = 0;
     for (;;) {
+        /* Each pass means the last event was fully evaluated. The watchdog
+           only needs to see this counter move. */
+        pg_store(&shared->progress_ns, monotonic_ns());
+        pg_store(&shared->progress, ++progress);
+        if (!policy.forced_off && pg_forced_off(shared)) pg_force_off(&policy);
+
         uint64_t deadline = pg_age_deadline(&policy);
         if (deadline && deadline != armed_deadline) {
             if (arm_at(age_timer, deadline) == -1) { perror("age timer"); return 1; }

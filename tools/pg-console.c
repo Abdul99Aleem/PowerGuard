@@ -87,6 +87,7 @@ static void display(const bench *b, const pg_status *before) {
     if (s->causes & WAIT_EFFECT) printf(" manager-timeout");
     if (s->causes & TEMP_EXPIRED) printf(" temperature-expired");
     if (s->causes & UNVERIFIED_FLAT) printf(" unverified-flat");
+    if (s->causes & WATCHDOG) printf(" watchdog");
     if (s->clear_since_ns) printf("  clear for %.0f ms",ms(s->as_of_ns-s->clear_since_ns));
     puts("");
 }

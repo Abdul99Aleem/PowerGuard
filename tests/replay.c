@@ -383,6 +383,19 @@ static void silent_manager(void) {
     CHECK(s->state == NORMAL);
 }
 
+/* B5: once the watchdog forces the workers off, nothing restores them until
+   a new run. */
+static void watchdog_latch(void) {
+    rig r = baseline();
+    pg_force_off(&r.p);
+    step(&r, 1);
+    CHECK(r.p.status.state == CRITICAL && r.p.status.causes == WATCHDOG);
+    run(&r, 2 * RECOVER_TICKS);
+    CHECK(r.p.status.state == CRITICAL && r.p.status.nc1_pct == 0 && r.p.status.nc2_pct == 0);
+    pg_init(&r.p, r.now);
+    CHECK(!r.p.forced_off);
+}
+
 void metric_checks(void);
 int main(void) {
     metric_checks();
@@ -467,6 +480,7 @@ int main(void) {
     missed_effect();
     late_restore();
     silent_manager();
+    watchdog_latch();
     puts("PASS: host policy replay assertions");
     return 0;
 }

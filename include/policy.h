@@ -44,7 +44,8 @@ enum pg_state { NORMAL, WARNING, THROTTLED, CRITICAL, RECOVERY };
 #define PG_NC_BOTH (PG_NC1 | PG_NC2)
 #define PG_CAP_UNKNOWN UINT32_MAX /* no trusted confirmation in this epoch */
 enum pg_reason { TEMP = 1, CPU = 2, POWER = 4, BAD_TEMP = 8, BAD_LOAD = 16,
-                 WAIT_EFFECT = 32, TEMP_EXPIRED = 64, UNVERIFIED_FLAT = 128 };
+                 WAIT_EFFECT = 32, TEMP_EXPIRED = 64, UNVERIFIED_FLAT = 128,
+                 WATCHDOG = 256 };
 enum pg_quality { UNAVAILABLE, GOOD, FROZEN, SENSOR_ERROR };
 enum pg_source { REAL = 1, SIMULATED = 2 };
 typedef struct {
@@ -77,12 +78,15 @@ typedef struct {
     uint64_t flat_since_ns; /* first acquisition of the current raw value */
     unsigned recovery_from; /* Throttled or Critical, restored on a cancel */
     int have_sample, bad_sequence;
+    int forced_off; /* latched by the watchdog until the next pg_init */
 } pg_policy;
 void pg_init(pg_policy *p, uint64_t now);
 void pg_ingest(pg_policy *p, const pg_sample *s, uint64_t now);
 int pg_activation_limit(unsigned signal, int value);
 int pg_recovery_ready(const pg_policy *);
 void pg_tick(pg_policy *p, uint64_t now);
+/* The watchdog saw the policy stall. Critical holds until a new run. */
+void pg_force_off(pg_policy *p);
 /* Absolute time the temperature expires without a newer valid reading, or 0. */
 uint64_t pg_age_deadline(const pg_policy *p);
 /* One worker applied the current decision. nc is 1 or 2. */

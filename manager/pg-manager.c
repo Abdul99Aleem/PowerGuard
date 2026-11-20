@@ -2,6 +2,7 @@
 #define _POSIX_C_SOURCE 200809L
 #include "bridge.h"
 #include "ipc.h"
+#include "progress.h"
 #include <errno.h>
 #include <signal.h>
 #include <stdint.h>
@@ -40,6 +41,8 @@ int main(void) {
 
     uint64_t last_acquired = 0, thermal_seq = 0, last_bench_job = 0;
     uint64_t reported_job = 0, last_decision = 0;
+    const pg_progress *watchdog = pg_progress_open(0);
+    int forced_off = 0;
     puts("pg-manager connected: telemetry, caps, effects, state and jobs are bridged");
     while (running) {
         pg_status_t bench;
@@ -88,7 +91,17 @@ int main(void) {
         }
 
         const pg_status *want = &decision.decision;
-        if (want->decision_id != last_decision) {
+        /* A watchdog stop is latched here too, so no restore can undo it.
+           A new supervisor run ends it, and the current caps are sent again. */
+        if (!watchdog) watchdog = pg_progress_open(0);
+        int forced = watchdog && pg_forced_off(watchdog);
+        if (forced && !forced_off &&
+            !bench_send(bench_coid, PG_CMD_CAPS, 0, 0, &bench)) {
+            perror("pgbench forced off"); result = 1; break;
+        }
+        if (!forced && forced_off) last_decision = 0;
+        forced_off = forced;
+        if (!forced_off && want->decision_id != last_decision) {
             if (!bench_send(bench_coid, PG_CMD_CAPS, (int)want->nc1_pct, (int)want->nc2_pct, &bench)) {
                 perror("pgbench caps"); result = 1; break;
             }

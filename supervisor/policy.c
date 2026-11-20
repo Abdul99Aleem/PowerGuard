@@ -164,6 +164,10 @@ static int valid_reading(const pg_sample *s) {
            s->thermal_seq && s->temp_deci_c >= -400 && s->temp_deci_c <= 1250;
 }
 
+void pg_force_off(pg_policy *p) {
+    p->forced_off = 1;
+}
+
 uint64_t pg_age_deadline(const pg_policy *p) {
     return p->last_good_ns ? p->last_good_ns + PG_TEMP_MAX_AGE : 0;
 }
@@ -292,7 +296,9 @@ void pg_tick(pg_policy *p, uint64_t now) {
         if (bands[i]) causes |= flags[i];
         if (bands[i] > required) required = bands[i];
     }
-    if (causes & (BAD_TEMP | BAD_LOAD | TEMP_EXPIRED | UNVERIFIED_FLAT)) required = CRITICAL;
+    if (p->forced_off) causes |= WATCHDOG;
+    if (causes & (BAD_TEMP | BAD_LOAD | TEMP_EXPIRED | UNVERIFIED_FLAT | WATCHDOG))
+        required = CRITICAL;
     /* The manager keeps confirming the target. If it falls silent, what it
        reported can no longer be trusted, and the effect deadline below takes
        over. The current decision is not reissued. */
