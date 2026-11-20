@@ -56,6 +56,7 @@ int main(void) {
         sample.temp_deci_c = bench.temperature_milli_c / 100;
         sample.quality = bench.sensor_age_ms <= 250 ? GOOD : FROZEN;
         sample.source = SIMULATED;
+        sample.verified = 1; /* pgbench generates a new value for every sample */
         for (unsigned i = 0; i < 4; ++i) sample.core_busy_pct[i] = cpu;
         sample.nc_demand_pct[0] = 20;
         sample.nc_demand_pct[1] = demand2;

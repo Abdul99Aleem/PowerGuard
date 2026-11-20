@@ -11,10 +11,31 @@
 #include <sys/trace.h>
 #include <time.h>
 
+#define PULSE_TICK _PULSE_CODE_MINAVAIL        /* periodic policy tick */
+#define PULSE_AGE (_PULSE_CODE_MINAVAIL + 1)  /* temperature age deadline */
+
 static uint64_t monotonic_ns(void) {
     struct timespec t;
     if (clock_gettime(CLOCK_MONOTONIC, &t) == -1) { perror("clock_gettime"); exit(1); }
     return (uint64_t)t.tv_sec * UINT64_C(1000000000) + (uint64_t)t.tv_nsec;
+}
+
+/* A timer that delivers the given pulse code to our own channel. The
+   tolerance call comes first so the timer gets high resolution. */
+static int pulse_timer(int coid, int priority, int code, timer_t *timer) {
+    struct sigevent event;
+    struct itimerspec tolerance = {.it_value = {.tv_nsec = 1}};
+    SIGEV_PULSE_INIT(&event, coid, priority, code, 0);
+    if (timer_create(CLOCK_MONOTONIC, &event, timer) == -1) return -1;
+    return timer_settime(*timer, TIMER_TOLERANCE, &tolerance, NULL);
+}
+
+/* One-shot at an absolute CLOCK_MONOTONIC time. It fires even if the sampler
+   has stopped sending, which is the point of an independent expiry. */
+static int arm_at(timer_t timer, uint64_t deadline) {
+    struct itimerspec at = {.it_value = {.tv_sec = (time_t)(deadline / UINT64_C(1000000000)),
+                                         .tv_nsec = (long)(deadline % UINT64_C(1000000000))}};
+    return timer_settime(timer, TIMER_ABSTIME, &at, NULL);
 }
 
 /* Enable user event 80 in the QNX trace session to retain state, reasons,
@@ -38,19 +59,24 @@ int main(int argc, char **argv) {
     if (!server) { perror("name_attach"); return 1; }
     int coid = ConnectAttach(0, 0, server->chid, _NTO_SIDE_CHANNEL, 0);
     if (coid == -1) { perror("ConnectAttach"); return 1; }
-    struct sigevent event;
-    SIGEV_PULSE_INIT(&event, coid, (int)priority, _PULSE_CODE_MINAVAIL, 0);
-    timer_t timer;
-    struct itimerspec tolerance = {.it_value = {.tv_nsec = 1}};
+    timer_t tick_timer, age_timer;
     struct itimerspec tick = {.it_interval = {.tv_nsec = PG_TICK},
                               .it_value = {.tv_nsec = PG_TICK}};
-    if (timer_create(CLOCK_MONOTONIC, &event, &timer) == -1 ||
-        timer_settime(timer, TIMER_TOLERANCE, &tolerance, NULL) == -1 ||
-        timer_settime(timer, 0, &tick, NULL) == -1) { perror("policy timer"); return 1; }
+    if (pulse_timer(coid, (int)priority, PULSE_TICK, &tick_timer) == -1 ||
+        timer_settime(tick_timer, 0, &tick, NULL) == -1 ||
+        pulse_timer(coid, (int)priority, PULSE_AGE, &age_timer) == -1) {
+        perror("policy timers"); return 1;
+    }
     pg_metrics metrics = {0};
     pg_policy policy;
     pg_init(&policy, monotonic_ns());
+    uint64_t armed_deadline = 0;
     for (;;) {
+        uint64_t deadline = pg_age_deadline(&policy);
+        if (deadline && deadline != armed_deadline) {
+            if (arm_at(age_timer, deadline) == -1) { perror("age timer"); return 1; }
+            armed_deadline = deadline;
+        }
         union { struct _pulse pulse; pg_message_v1 message; } in;
         struct _msg_info info;
         rcvid_t id = MsgReceive(server->chid, &in, sizeof(in), &info);
@@ -58,7 +84,7 @@ int main(int argc, char **argv) {
         uint64_t now = monotonic_ns();
         pg_status before = policy.status;
         if (id == 0) {
-            if (in.pulse.code == _PULSE_CODE_MINAVAIL) pg_tick(&policy, now);
+            if (in.pulse.code == PULSE_TICK || in.pulse.code == PULSE_AGE) pg_tick(&policy, now);
             pg_observe(&metrics, &before, &policy);
             trace_change(&before, &policy.status);
             if (in.pulse.code == _PULSE_CODE_DISCONNECT) ConnectDetach(in.pulse.scoid);

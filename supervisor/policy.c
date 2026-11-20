@@ -134,6 +134,16 @@ static int fresh(uint64_t stamp, uint64_t now, uint64_t max_age) {
     return stamp != 0 && stamp <= now && now - stamp <= max_age;
 }
 
+/* A reading the policy can use: good quality, a known source, in range. */
+static int valid_reading(const pg_sample *s) {
+    return s->quality == GOOD && (s->source == REAL || s->source == SIMULATED) &&
+           s->thermal_seq && s->temp_deci_c >= -400 && s->temp_deci_c <= 1250;
+}
+
+uint64_t pg_age_deadline(const pg_policy *p) {
+    return p->last_good_ns ? p->last_good_ns + PG_TEMP_MAX_AGE : 0;
+}
+
 void pg_ingest(pg_policy *p, const pg_sample *s, uint64_t now) {
     if (s->acquired_ns > now) {
         p->bad_sequence = 1;
@@ -160,6 +170,16 @@ void pg_ingest(pg_policy *p, const pg_sample *s, uint64_t now) {
         !fresh(p->sample.load_end_ns, now, PG_CPU_MAX_AGE))) {
         p->status.clear_since_ns = 0;
         p->healthy_since_ns = 0;
+    }
+    /* Age only moves forward on a valid reading taken after the last expiry,
+       so a record that arrives late cannot undo an expiry already declared. */
+    if (!p->bad_sequence && valid_reading(s) && s->acquired_ns > p->last_good_ns &&
+        s->acquired_ns > p->expired_at_ns) {
+        if (s->verified || !p->last_good_ns || s->temp_deci_c != p->sample.temp_deci_c)
+            p->flat_since_ns = s->acquired_ns;
+        if (p->status.state == RECOVERY && s->acquired_ns - p->last_good_ns > PG_RECOVERY_GAP)
+            p->status.clear_since_ns = 0; /* samples went missing during the dwell */
+        p->last_good_ns = s->acquired_ns;
     }
     int bad_load_stamp = s->load_end_ns > now ||
         (p->have_sample && s->load_end_ns < p->sample.load_end_ns);
@@ -193,10 +213,17 @@ void pg_tick(pg_policy *p, uint64_t now) {
     p->last_eval_ns = now;
     s->as_of_ns = now;
     s->lease_until_ns = now + PG_LEASE;
-    if (!p->have_sample || p->bad_sequence || in->quality != GOOD ||
-        (in->source != REAL && in->source != SIMULATED) ||
-        !in->thermal_seq || !fresh(in->acquired_ns, now, PG_TEMP_MAX_AGE) ||
-        in->temp_deci_c < -400 || in->temp_deci_c > 1250) causes |= BAD_TEMP;
+    if (!p->have_sample || p->bad_sequence || !valid_reading(in)) causes |= BAD_TEMP;
+    /* The age check uses only acquisition times, so it holds even if the
+       sampler stops sending. The QNX service also arms a timer for it. */
+    uint64_t deadline = pg_age_deadline(p);
+    if (!deadline || now >= deadline) {
+        causes |= TEMP_EXPIRED;
+        if (deadline > p->expired_at_ns) p->expired_at_ns = deadline;
+    }
+    /* The same unverified raw value for 2 s may be a stuck sensor. */
+    if (p->last_good_ns && !in->verified && p->last_good_ns - p->flat_since_ns >= PG_FLAT_LIMIT)
+        causes |= UNVERIFIED_FLAT;
     if (!fresh(in->load_end_ns, now, PG_CPU_MAX_AGE)) causes |= BAD_LOAD;
     for (unsigned i = 0; i < 4; ++i) {
         int busy = in->core_busy_pct[i];
@@ -223,7 +250,7 @@ void pg_tick(pg_policy *p, uint64_t now) {
         if (bands[i]) causes |= flags[i];
         if (bands[i] > required) required = bands[i];
     }
-    if (causes & (BAD_TEMP | BAD_LOAD)) required = CRITICAL;
+    if (causes & (BAD_TEMP | BAD_LOAD | TEMP_EXPIRED | UNVERIFIED_FLAT)) required = CRITICAL;
     if (s->effective_ns && now - p->manager_seen_ns >= PG_LEASE) {
         issue(s, CRITICAL, now);
         causes |= WAIT_EFFECT;
@@ -234,6 +261,8 @@ void pg_tick(pg_policy *p, uint64_t now) {
         required = CRITICAL;
     }
     s->causes = causes;
+    /* A recovery dwell needs unbroken sampling (PRD page 7). */
+    if (s->state == RECOVERY && now - p->last_good_ns > PG_RECOVERY_GAP) s->clear_since_ns = 0;
     if (!pg_recovery_ready(p)) p->healthy_since_ns = 0;
     else if (!p->healthy_since_ns) p->healthy_since_ns = now;
     advance_fsm(p, required, pg_recovery_ready(p), now);

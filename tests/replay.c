@@ -39,6 +39,7 @@ static rig baseline(void) {
     r.in.temp_deci_c = 500;
     r.in.quality = GOOD;
     r.in.source = SIMULATED;
+    r.in.verified = 1;
     run(&r,RECOVER_TICKS);
     CHECK(r.p.status.state == NORMAL);
     return r;
@@ -193,6 +194,105 @@ static void warning_return(void) {
     CHECK(r.p.status.state == NORMAL && r.now - start == PG_WARNING_CLEAR);
 }
 
+/* Resend the same reading at a chosen time, as a quiet heartbeat would. */
+static void resend_at(rig *r, uint64_t at) {
+    r->now = at;
+    r->in.load_end_ns = at;
+    pg_ingest(&r->p, &r->in, at);
+    acknowledge(r);
+}
+
+/* J3a: 150 ms without a new valid acquisition is Critical, whatever arrives. */
+static void age_expiry(void) {
+    rig r = baseline();
+    uint64_t last = r.in.acquired_ns, deadline = last + PG_TEMP_MAX_AGE;
+    CHECK(pg_age_deadline(&r.p) == deadline);
+    for (uint64_t t = last + PG_TICK; t < deadline; t += PG_TICK) resend_at(&r, t);
+    resend_at(&r, deadline - 1);
+    CHECK(r.p.status.state == NORMAL);
+    resend_at(&r, deadline);
+    CHECK(r.p.status.state == CRITICAL && r.p.status.causes == TEMP_EXPIRED);
+
+    /* A record taken before the deadline but delivered after it cannot
+       undo the expiry. */
+    r.in.thermal_seq++;
+    r.in.acquired_ns = deadline - PG_MS;
+    resend_at(&r, deadline + 5 * PG_MS);
+    CHECK((r.p.status.causes & TEMP_EXPIRED) && pg_age_deadline(&r.p) == deadline);
+
+    /* A fresh reading after that starts an ordinary recovery. */
+    timeline t = clear_until_normal(&r);
+    CHECK(t.nc1_ms == 2000 && t.full_ms == 3000);
+}
+
+/* B1: when an expiry and a restore fall on the same instant, the expiry wins. */
+static void expiry_beats_restore(void) {
+    rig r = after(PG_TEMP_WARN);
+    r.in.temp_deci_c = PG_TEMP_CLEAR;
+    step(&r, 1);
+    uint64_t back_to_normal = r.now + PG_WARNING_CLEAR;
+    while (r.now < back_to_normal - PG_TEMP_MAX_AGE) step(&r, 1);
+    while (r.now < back_to_normal) {
+        CHECK(r.p.status.state == WARNING);
+        step(&r, 0);
+    }
+    CHECK(r.p.status.state == CRITICAL && (r.p.status.causes & TEMP_EXPIRED));
+}
+
+/* A sampling gap over 35 ms breaks a recovery dwell; 30 ms does not. */
+static void recovery_gap(void) {
+    rig r = after(PG_TEMP_CRITICAL);
+    r.in.temp_deci_c = PG_TEMP_CLEAR;
+    step(&r, 1);
+    uint64_t since = r.p.status.clear_since_ns;
+    step(&r, 0); step(&r, 0); step(&r, 1);
+    step(&r, 0); step(&r, 0); step(&r, 0);
+    CHECK(r.p.status.state == RECOVERY && r.p.status.clear_since_ns == since);
+    step(&r, 0);
+    CHECK(r.p.status.state == CRITICAL && !r.p.status.clear_since_ns);
+
+    /* The same gap seen only by the next sample, with no tick in between. */
+    r = after(PG_TEMP_CRITICAL);
+    r.in.temp_deci_c = PG_TEMP_CLEAR;
+    step(&r, 1);
+    CHECK(r.p.status.state == RECOVERY);
+    r.now += 40 * PG_MS;
+    r.in.thermal_seq++;
+    r.in.acquired_ns = r.in.load_end_ns = r.now;
+    pg_ingest(&r.p, &r.in, r.now);
+    CHECK(r.p.status.state == CRITICAL);
+}
+
+/* J3b: an unverified value that never changes is Critical after 2.0 s. */
+static void unverified_flat(void) {
+    rig r = baseline();
+    r.in.verified = 0;
+    r.in.temp_deci_c = 600;
+    step(&r, 1);
+    uint64_t start = r.now;
+    while (r.now < start + PG_FLAT_LIMIT - PG_TICK) {
+        step(&r, 1);
+        CHECK(r.p.status.state == NORMAL);
+    }
+    step(&r, 1);
+    CHECK(r.p.status.state == CRITICAL && r.p.status.causes == UNVERIFIED_FLAT);
+    run(&r, RECOVER_TICKS);
+    CHECK(r.p.status.state == CRITICAL);
+
+    /* A changing value clears it, then the ordinary recovery runs. */
+    for (unsigned i = 0; r.p.status.state != NORMAL; ++i) {
+        CHECK(i < RECOVER_TICKS);
+        r.in.temp_deci_c = 600 + (int)(i & 1);
+        step(&r, 1);
+    }
+
+    /* The same steady 60 C is fine when every conversion is verified. */
+    r = baseline();
+    r.in.temp_deci_c = 600;
+    run(&r, 2 * RECOVER_TICKS);
+    CHECK(r.p.status.state == NORMAL && !r.p.status.causes);
+}
+
 void metric_checks(void);
 int main(void) {
     metric_checks();
@@ -221,9 +321,9 @@ int main(void) {
 
     r = baseline(); r.verbose = 1;
     puts("SIMULATED  same sample replayed by a live sender");
-    for (int i=0; i<25; i++) step(&r,0);
+    for (int i=0; i<14; i++) step(&r,0);
     CHECK(r.p.status.state == NORMAL);
-    step(&r,0); CHECK(r.p.status.state == CRITICAL && (r.p.status.causes & BAD_TEMP));
+    step(&r,0); CHECK(r.p.status.state == CRITICAL && (r.p.status.causes & TEMP_EXPIRED));
     r.in.quality = FROZEN; step(&r,1); CHECK(r.p.status.causes & BAD_TEMP);
     r.in.quality = GOOD; run(&r,RECOVER_TICKS); CHECK(r.p.status.state == NORMAL);
 
@@ -269,6 +369,10 @@ int main(void) {
     controlled_restoration();
     throttled_restoration();
     warning_return();
+    age_expiry();
+    expiry_beats_restore();
+    recovery_gap();
+    unverified_flat();
     puts("PASS: host policy replay assertions");
     return 0;
 }

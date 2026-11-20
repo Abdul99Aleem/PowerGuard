@@ -5,7 +5,7 @@
 /* Draft v1. Local Pi monotonic nanoseconds. Percentages are integers 0..100. */
 #define PG_MS UINT64_C(1000000)
 #define PG_TICK (10 * PG_MS)
-#define PG_TEMP_MAX_AGE (250 * PG_MS)
+#define PG_TEMP_MAX_AGE (150 * PG_MS) /* no valid acquisition for this long: Critical */
 #define PG_CPU_MAX_AGE (50 * PG_MS)
 #define PG_LEASE (50 * PG_MS)
 #define PG_RESPONSE_TARGET (20 * PG_MS) /* experimental until frozen on Pi */
@@ -14,6 +14,11 @@
 #define PG_WARNING_CLEAR (2000 * PG_MS) /* Warning straight back to Normal */
 #define PG_RESTORE_NC1 (2000 * PG_MS)   /* recovery: NC1 reopens */
 #define PG_RESTORE_NC2 (1000 * PG_MS)   /* then NC2, after NC1 is confirmed */
+#define PG_RECOVERY_GAP (35 * PG_MS)    /* a longer sampling gap breaks the dwell */
+
+/* An unverified raw value that stays exactly the same this long cannot be
+   told apart from a stuck sensor (PRD page 4). */
+#define PG_FLAT_LIMIT (2000 * PG_MS)
 
 /* Limits for each input (PRD page 7). Temperature is in tenths of a degree C,
    U is the busiest core in percent and P is the 0..100 demand index.
@@ -34,7 +39,7 @@
 
 enum pg_state { NORMAL, WARNING, THROTTLED, CRITICAL, RECOVERY };
 enum pg_reason { TEMP = 1, CPU = 2, POWER = 4, BAD_TEMP = 8, BAD_LOAD = 16,
-                 WAIT_EFFECT = 32 };
+                 WAIT_EFFECT = 32, TEMP_EXPIRED = 64, UNVERIFIED_FLAT = 128 };
 enum pg_quality { UNAVAILABLE, GOOD, FROZEN, SENSOR_ERROR };
 enum pg_source { REAL = 1, SIMULATED = 2 };
 typedef struct {
@@ -42,6 +47,7 @@ typedef struct {
     int32_t temp_deci_c, quality, source;
     int32_t core_busy_pct[4]; /* previous sample window on each Pi core */
     int32_t nc_demand_pct[2]; /* pre-cap request, each relative to one core */
+    int32_t verified; /* 1 when the source proves each reading is a new conversion */
 } pg_sample;
 typedef struct {
     uint64_t epoch, decision_id, issued_ns, lease_until_ns, as_of_ns;
@@ -56,6 +62,9 @@ typedef struct {
     uint64_t last_eval_ns, manager_seen_ns;
     uint64_t healthy_since_ns;
     uint64_t nc1_step_ns; /* when this recovery passed its NC1 step */
+    uint64_t last_good_ns; /* acquisition time of the latest valid reading */
+    uint64_t expired_at_ns; /* latest age deadline that passed */
+    uint64_t flat_since_ns; /* first acquisition of the current raw value */
     unsigned recovery_from; /* Throttled or Critical, restored on a cancel */
     int have_sample, bad_sequence;
 } pg_policy;
@@ -64,6 +73,8 @@ void pg_ingest(pg_policy *p, const pg_sample *s, uint64_t now);
 int pg_activation_limit(unsigned signal, int value);
 int pg_recovery_ready(const pg_policy *);
 void pg_tick(pg_policy *p, uint64_t now);
+/* Absolute time the temperature expires without a newer valid reading, or 0. */
+uint64_t pg_age_deadline(const pg_policy *p);
 /* The manager sends this only after BOTH limits have taken effect. */
 int pg_effect(pg_policy *p, uint64_t epoch, uint64_t id, uint64_t effective,
               unsigned nc1, unsigned nc2, uint64_t now);

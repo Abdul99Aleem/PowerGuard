@@ -48,7 +48,7 @@ void pg_observe(pg_metrics *m, const pg_status *old, const pg_policy *p) {
     if (!m->started_normal) return; /* exclude safe startup from experiment metrics */
 
     int values[] = {p->sample.temp_deci_c,(int)s->cpu_peak_pct,(int)s->power_index};
-    int valid[] = {!(s->causes & BAD_TEMP), !(s->causes & BAD_LOAD), !(s->causes & BAD_LOAD)};
+    int valid[] = {!(s->causes & (BAD_TEMP | TEMP_EXPIRED)), !(s->causes & BAD_LOAD), !(s->causes & BAD_LOAD)};
     if (s->decision_id != old->decision_id) {
         if (r->pending_id) { ++r->unconfirmed; r->pending_id = 0; }
         if (s->stage > old->stage) {

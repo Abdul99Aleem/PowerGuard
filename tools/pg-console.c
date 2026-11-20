@@ -83,6 +83,8 @@ static void display(const bench *b, const pg_status *before) {
     if (s->causes & BAD_TEMP) printf(" invalid-temperature");
     if (s->causes & BAD_LOAD) printf(" invalid-load");
     if (s->causes & WAIT_EFFECT) printf(" manager-timeout");
+    if (s->causes & TEMP_EXPIRED) printf(" temperature-expired");
+    if (s->causes & UNVERIFIED_FLAT) printf(" unverified-flat");
     if (s->clear_since_ns) printf("  clear for %.0f ms",ms(s->as_of_ns-s->clear_since_ns));
     puts("");
 }
@@ -100,6 +102,7 @@ static int frame(bench *b, int temp, const int cores[4], int demand, int quality
         s->temp_deci_c = temp;
         s->quality = quality;
         s->source = SIMULATED;
+        s->verified = 1; /* every console frame is a new simulated reading */
     } /* In stale mode the original acquisition is repeated verbatim. */
     s->load_end_ns = t;
     for (int i=0; i<4; ++i) s->core_busy_pct[i] = cores[i];
