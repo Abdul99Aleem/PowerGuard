@@ -3,7 +3,7 @@
 **Deterministic Power and Thermal-Budget Management for QNX Edge Systems**  
 **Team Schedulix · QNX eHACK National Finals · QNXHACK-HYD-014**
 
-> **Project status:** Repository bootstrap. The only available uploaded source is a Hello World C scaffold; no PowerGuard controller, sensor, scheduler or measured results are claimed complete. The **full QNX Momentics IDE project** (especially `.project`, `.cproject`, source and build rules) must still be imported from the local workstation.
+> **Project status:** This branch implements K’s QNX supervisor, five-state policy, console and metric checks. The live scorecard needs worker acknowledgements and critical-job telemetry from the integrated Pi.
 
 ## Project goal
 
@@ -44,25 +44,26 @@ Five scored metrics: detection-to-effective-restriction latency, critical deadli
 
 **Keep portable IDE metadata in Git**: `.project`, `.cproject`, applicable `.settings/` preferences, source, headers, and the actual project Makefiles. **Do not commit** compiled binaries, generated build output, Eclipse workspace `.metadata/`, private credentials, or captured result bundles.
 
-The bootstrap source at `src/PowerGuard.c` is just the user-supplied Hello World example. The original local project is at:
+### Build and try the supervisor
 
-```text
-C:\Users\User\ide-8.0.3-workspace\PowerGuard
+Import the cloned repository using **File → Import → General → Existing Projects into Workspace** in Momentics 8. Select **PowerGuard**, choose **aarch64le-debug**, and run **Project → Build Project**. From a QNX SDP 8 environment, `make all` builds the same three programs in `build/aarch64le-debug/`.
+
+| Program | How to run it |
+|---|---|
+| `pg-console` | For a first run, choose this binary in a C/C++ QNX Application launch configuration on your Pi. Enter `55 86 30` as the arguments (temperature °C, busiest-core CPU %, power index). The simulated policy reports **Throttled**, NC1 100%, NC2 0%. Leave arguments empty for interactive input or use `--example` for a scored scenario. |
+| `pg-check` | Run without arguments to exercise the policy transitions, freshness, acknowledgements and five scoring calculations. |
+| `PowerGuard` | Run the live service with your configured FIFO priority as its argument (e.g. `20`). Select a priority below the critical task and above the background workers. |
+
+In a local console session, try `55 30 30 frozen`, then `55 30 30 good 3000` to see progressive recovery. In live mode the supervisor starts conservatively. A producer supplies fresh measurements and the workload manager acknowledges effective caps. Use `pg-console --live scores` to read the scorecard. The scenario driver can also supply labelled simulated input, e.g. `pg-console --live 55 86 30 good 1000` in place of the regular producer for that run.
+
+The [IPC header](include/ipc.h) defines the local versioned contract. Use `PG_SAMPLE` for a derived power estimate or `PG_SAMPLE_POWER` for an explicit index. The manager reads `PG_READ` and confirms both applied budgets with `PG_EFFECT`. The timing reporter sends one `PG_JOB` per release. The scenario driver arms `PG_TRIAL` for comparable repeated transitions. `PG_SCORE` returns restriction latency, critical misses, overshoot, jitter and restoration time. All timestamps are in the target’s monotonic nanoseconds. The 20 ms reaction target is provisional until measured on the Pi.
+
+The portable tests can also run on a development host with a C11 compiler:
+
+```sh
+cc -std=c11 -Wall -Wextra -Werror -Iinclude supervisor/policy.c supervisor/metrics.c tests/replay.c tests/metric_checks.c -o pg-check
+./pg-check
 ```
-
-The connection to GitHub **cannot read this local Windows directory**. Before calling the repository a buildable Momentics project, compare/import the **real local project tree** and confirm `.project` and `.cproject` are present.
-
-### For a teammate: clone and import
-
-Install Git and the compatible QNX SDP/Momentics environment. In PowerShell:
-
-```powershell
-cd "$HOME"
-git clone https://github.com/Abdul99Aleem/PowerGuard.git
-cd PowerGuard
-```
-
-Once the real Momentics metadata has been pushed: **Momentics IDE → File → Import → General → Existing Projects into Workspace**, select this cloned folder, leave **Copy projects into workspace** unchecked, and verify the configured QNX toolchain, architecture and build variant before building. Until the metadata is committed, this import will not recreate the IDE project.
 
 ### Working on an assigned card
 
@@ -79,26 +80,27 @@ git push -u origin feature/PG-05-cpu-worker
 
 Create a pull request to `main` and request review from a teammate. One owner per module; review shared IPC header changes in advance. Do not mark cards done without target-specific acceptance evidence.
 
-## Initial project layout (planned)
+## Project layout
 
 ```text
 PowerGuard/
 ├── README.md
 ├── .gitignore
-├── src/PowerGuard.c             # Hello World placeholder only
-├── include/                     # versioned IPC/configuration headers (planned)
+├── src/PowerGuard.c             # QNX supervisor service
+├── include/                     # supervisor policy, metrics and IPC headers
 ├── critical/                    # R
 ├── workloads/                   # A
 ├── manager/                     # A
 ├── watchdog/                    # A
-├── supervisor/                  # K
+├── supervisor/                  # policy and metric calculations (K)
 ├── thermal/                     # K
 ├── power/                       # K
 ├── telemetry/                   # R/K
 ├── cli/                         # K
 ├── gpio/                        # A
 ├── platform/qnx/                # R
-├── tests/                       # host, QNX and scenario checks
+├── tools/pg-console.c           # interactive test and IPC client
+├── tests/                       # portable policy and scorecard checks
 ├── docs/
 └── results/                     # generated runs (ignored)
 ```
