@@ -44,16 +44,17 @@ DEPS = -Wp,-MMD,$(@:%.o=%.d),-MT,$@
 # Each executable has its own entry point and shares the same policy and metrics.
 .DEFAULT_GOAL := all
 .PHONY: all clean rebuild
-INCLUDES += -Iinclude
+INCLUDES += -Iinclude -Itestbench
 CCFLAGS_all += -std=gnu11
 
 CORE_OBJS = $(OUTPUT_DIR)/supervisor/policy.o $(OUTPUT_DIR)/supervisor/metrics.o
 SERVICE_OBJS = $(CORE_OBJS) $(OUTPUT_DIR)/src/PowerGuard.o
 CONSOLE_OBJS = $(CORE_OBJS) $(OUTPUT_DIR)/tools/pg-console.o
 CHECK_OBJS = $(CORE_OBJS) $(OUTPUT_DIR)/tests/replay.o $(OUTPUT_DIR)/tests/metric_checks.o
-OBJS = $(sort $(SERVICE_OBJS) $(CONSOLE_OBJS) $(CHECK_OBJS))
+MANAGER_OBJS = $(OUTPUT_DIR)/manager/pg-manager.o
+OBJS = $(sort $(SERVICE_OBJS) $(CONSOLE_OBJS) $(CHECK_OBJS) $(MANAGER_OBJS))
 
-all: $(TARGET) $(OUTPUT_DIR)/pg-console $(OUTPUT_DIR)/pg-check
+all: $(TARGET) $(OUTPUT_DIR)/pg-console $(OUTPUT_DIR)/pg-check $(OUTPUT_DIR)/pg-manager
 
 $(OUTPUT_DIR)/%.o: %.c
 	@mkdir -p $(dir $@)
@@ -66,6 +67,9 @@ $(OUTPUT_DIR)/pg-console: $(CONSOLE_OBJS)
 	$(LD) -o $@ $(LDFLAGS_all) $(LDFLAGS) $^ $(LIBS_all) $(LIBS) -lm
 
 $(OUTPUT_DIR)/pg-check: $(CHECK_OBJS)
+	$(LD) -o $@ $(LDFLAGS_all) $(LDFLAGS) $^ $(LIBS_all) $(LIBS)
+
+$(OUTPUT_DIR)/pg-manager: $(MANAGER_OBJS)
 	$(LD) -o $@ $(LDFLAGS_all) $(LDFLAGS) $^ $(LIBS_all) $(LIBS)
 
 clean:

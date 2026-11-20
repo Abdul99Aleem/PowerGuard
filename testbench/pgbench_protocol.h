@@ -17,7 +17,10 @@ enum pg_command {
     PG_CMD_SCENARIO = 2,
     PG_CMD_LEVEL = 3,
     PG_CMD_STATE = 4,
-    PG_CMD_STOP = 5
+    PG_CMD_STOP = 5,
+    /* Exact NC1/NC2 caps.  This is used by pg-manager; PG_CMD_LEVEL remains
+       available for the original manual demo CLI. */
+    PG_CMD_CAPS = 6
 };
 
 enum pg_scenario {
@@ -28,7 +31,7 @@ enum pg_scenario {
 };
 
 /* These are REPORTS from the supervisor, not states decided by this testbench. */
-enum pg_state {
+enum pg_bench_state {
     PG_ST_UNKNOWN = 0,
     PG_ST_NORMAL = 1,
     PG_ST_WARNING = 2,
@@ -51,6 +54,8 @@ typedef struct {
     int32_t scenario;
     int32_t level_requested;
     int32_t level_applied;
+    int32_t nc1_cap_pct;
+    int32_t nc2_cap_pct;
     int32_t supervisor_state;
     int32_t recovery_percent;
     int32_t critical_fifo_ok;
@@ -63,8 +68,13 @@ typedef struct {
     uint64_t critical_max_response_us;
     uint64_t critical_max_jitter_us;
     uint64_t last_actuation_us;   /* command receipt -> BOTH worker acknowledgments */
+    uint64_t last_effective_ns;   /* CLOCK_MONOTONIC timestamp of BOTH-worker ACK */
     uint64_t detection_to_actuation_us; /* 0 when no qualifying detection */
     uint64_t recovery_to_full_ms; /* 0 when not measured */
+    uint64_t last_job_id;
+    uint64_t last_job_release_ns;
+    uint64_t last_job_deadline_ns;
+    uint64_t last_job_finish_ns;
 } pg_status_t;
 
 #endif

@@ -19,16 +19,16 @@
 #define PERIOD_NS 20000000ULL  /* 20 ms periodic critical job */
 #define DEADLINE_NS 20000000ULL
 #define JOB_NS 1000000ULL     /* approximate 1 ms CPU burn */
-#define SAMPLE_NS 100000000ULL
+#define WORKER_NS 10000000ULL    /* 10 ms: meets the supervisor's 50 ms lease */
+#define TELEMETRY_NS 10000000ULL /* 10 ms: meets the supervisor's CPU freshness */
 static pthread_mutex_t mu = PTHREAD_MUTEX_INITIALIZER;
 static volatile sig_atomic_t running = 1;
 static pg_status_t st;
 static uint64_t start_ns, last_sensor_ns, last_tick_ns, last_cpu_ns;
 static int level = 0, scenario = PG_SC_NORMAL, current_state = PG_ST_UNKNOWN;
+static int nc1_cap = 100, nc2_cap = 100;
 static uint64_t level_command_ns, ack_ns[2], recover_ns;
-static uint64_t sensor_sample_ns;
-static int freeze_after_ticks = 4;
-static uint64_t tick_count;
+static uint64_t scenario_started_ns;
 
 static uint64_t now_ns(clockid_t id) {
     struct timespec t; clock_gettime(id, &t);
@@ -63,6 +63,10 @@ static void *critical_worker(void *unused) {
         uint64_t jitter = began > release ? began - release : release - began;
         pthread_mutex_lock(&mu);
         st.critical_jobs++;
+        st.last_job_id = st.critical_jobs;
+        st.last_job_release_ns = release;
+        st.last_job_deadline_ns = release + DEADLINE_NS;
+        st.last_job_finish_ns = ended;
         if (ended > release + DEADLINE_NS) st.critical_misses++;
         if (response / 1000 > st.critical_max_response_us) st.critical_max_response_us = response / 1000;
         if (jitter / 1000 > st.critical_max_jitter_us) st.critical_max_jitter_us = jitter / 1000;
@@ -77,7 +81,7 @@ static void *noncritical_worker(void *ptr) {
     uint64_t next = now_ns(CLOCK_MONOTONIC);
     while (running) {
         pthread_mutex_lock(&mu);
-        int allowed = (id == 0 ? level < 2 : level < 1);
+        int cap = id == 0 ? nc1_cap : nc2_cap;
         int local_scenario = scenario;
         if (ack_ns[id] < level_command_ns) {
             ack_ns[id] = now_ns(CLOCK_MONOTONIC);
@@ -85,6 +89,9 @@ static void *noncritical_worker(void *ptr) {
                 uint64_t latest = ack_ns[0] > ack_ns[1] ? ack_ns[0] : ack_ns[1];
                 st.last_actuation_us = (latest - level_command_ns) / 1000;
                 st.level_applied = level;
+                st.nc1_cap_pct = nc1_cap;
+                st.nc2_cap_pct = nc2_cap;
+                st.last_effective_ns = latest;
                 if (level == 0 && recover_ns != 0) {
                     st.recovery_to_full_ms = (latest - recover_ns) / 1000000;
                     recover_ns = 0;
@@ -94,8 +101,8 @@ static void *noncritical_worker(void *ptr) {
         pthread_mutex_unlock(&mu);
         /* Approximate software duty-cycle: normal NC1 20%, NC2 15%; spike NC2 90%. */
         int percent = id == 0 ? 20 : (local_scenario == PG_SC_SPIKE ? 90 : 15);
-        if (allowed) burn_for((uint64_t)percent * SAMPLE_NS / 100);
-        next += SAMPLE_NS;
+        if (cap > 0) burn_for((uint64_t)percent * (unsigned)cap * WORKER_NS / 10000);
+        next += WORKER_NS;
         uint64_t n = now_ns(CLOCK_MONOTONIC);
         if (next < n) next = n + 1000000ULL;
         sleep_until(next);
@@ -105,17 +112,17 @@ static void *noncritical_worker(void *ptr) {
 static void *sampler(void *unused) {
     (void)unused;
     while (running) {
-        sleep_until(now_ns(CLOCK_MONOTONIC) + NS);
+        sleep_until(now_ns(CLOCK_MONOTONIC) + TELEMETRY_NS);
         uint64_t n = now_ns(CLOCK_MONOTONIC);
         uint64_t cpu = now_ns(CLOCK_PROCESS_CPUTIME_ID);
         pthread_mutex_lock(&mu);
-        tick_count++;
         /* Explicitly SIMULATED. A frozen sample retains its old timestamp. */
-        if (scenario != PG_SC_FREEZE || tick_count <= (uint64_t)freeze_after_ticks) {
+        uint64_t elapsed = n - scenario_started_ns;
+        if (scenario != PG_SC_FREEZE || elapsed < 4 * NS) {
             int32_t temp = 45000;
             if (scenario == PG_SC_RAMP) {
-                uint64_t elapsed = tick_count > 0 ? tick_count - 1 : 0;
-                temp += (int32_t)(elapsed > 35 ? 35000 : elapsed * 1000);
+                uint64_t seconds = elapsed / NS;
+                temp += (int32_t)(seconds > 35 ? 35000 : seconds * 1000);
             } else if (scenario == PG_SC_SPIKE) temp = 56000;
             else if (scenario == PG_SC_FREEZE) temp = 52000;
             st.temperature_milli_c = temp;
@@ -164,11 +171,13 @@ static void serve(const char *csv_path) {
     FILE *fp = fopen(csv_path, "w");
     if (!fp) { perror(csv_path); name_detach(attach, 0); exit(1); }
     fprintf(fp, "monotonic_ns,scenario,temp_sim_milli_c,sensor_age_ms,process_cpu_per_core_tenths,level_requested,level_applied,supervisor_state,critical_jobs,deadline_misses,max_response_us,max_release_jitter_us,last_actuation_us,recovery_to_full_ms\n");
-    start_ns = last_sensor_ns = now_ns(CLOCK_MONOTONIC);
+    start_ns = last_sensor_ns = scenario_started_ns = now_ns(CLOCK_MONOTONIC);
     st.temperature_milli_c = 45000;
     last_cpu_ns = now_ns(CLOCK_PROCESS_CPUTIME_ID);
     last_tick_ns = start_ns;
     st.supervisor_state = PG_ST_UNKNOWN;
+    st.nc1_cap_pct = nc1_cap;
+    st.nc2_cap_pct = nc2_cap;
     pthread_t critical, nc1, nc2, sample, logger;
     if (pthread_create(&critical, NULL, critical_worker, NULL) ||
         pthread_create(&nc1, NULL, noncritical_worker, (void *)(intptr_t)0) ||
@@ -196,7 +205,7 @@ static void serve(const char *csv_path) {
             if (msg.req.arg < PG_SC_NORMAL || msg.req.arg > PG_SC_FREEZE) err = EINVAL;
             else {
                 scenario = msg.req.arg; st.scenario = scenario;
-                tick_count = 0; last_sensor_ns = now_ns(CLOCK_MONOTONIC);
+                scenario_started_ns = last_sensor_ns = now_ns(CLOCK_MONOTONIC);
                 st.sensor_age_ms = 0; st.temperature_milli_c = scenario == PG_SC_NORMAL ? 45000 : st.temperature_milli_c;
             }
             break;
@@ -205,9 +214,24 @@ static void serve(const char *csv_path) {
             else {
                 int old = level;
                 level = msg.req.arg; st.level_requested = level;
+                nc1_cap = level < 2 ? 100 : 0;
+                nc2_cap = level < 1 ? 100 : 0;
                 level_command_ns = now_ns(CLOCK_MONOTONIC);
                 ack_ns[0] = ack_ns[1] = 0;
                 if (old == 2 && level < 2 && recover_ns == 0) recover_ns = level_command_ns;
+            }
+            break;
+          case PG_CMD_CAPS:
+            if (msg.req.arg < 0 || msg.req.arg > 100 || msg.req.extra < 0 || msg.req.extra > 100) err = EINVAL;
+            else {
+                int old_restricted = (nc1_cap == 0 && nc2_cap == 0);
+                nc1_cap = msg.req.arg; nc2_cap = msg.req.extra;
+                level = nc1_cap == 0 ? 2 : nc2_cap == 0 ? 1 : 0;
+                st.level_requested = level;
+                level_command_ns = now_ns(CLOCK_MONOTONIC);
+                ack_ns[0] = ack_ns[1] = 0;
+                if (old_restricted && (nc1_cap != 0 || nc2_cap != 0) && recover_ns == 0)
+                    recover_ns = level_command_ns;
             }
             break;
           case PG_CMD_STATE:
@@ -236,9 +260,8 @@ static void print_status(const pg_status_t *s) {
     const char *states[] = {"UNKNOWN", "NORMAL", "WARNING", "THROTTLED", "CRITICAL", "RECOVERY"};
     printf("Scenario: %s | temperature: %.1f C (SIMULATED), age: %u ms\n",
       names[s->scenario], s->temperature_milli_c / 1000., s->sensor_age_ms);
-    printf("CPU: %.1f%% of one core (process CPU time) | NC1: %s | NC2: %s\n",
-      s->process_cpu_per_core_tenths / 10., s->level_applied < 2 ? "ON" : "OFF",
-      s->level_applied < 1 ? "ON" : "OFF");
+    printf("CPU: %.1f%% of one core (process CPU time) | NC1 cap: %d%% | NC2 cap: %d%%\n",
+      s->process_cpu_per_core_tenths / 10., s->nc1_cap_pct, s->nc2_cap_pct);
     printf("Restriction: requested=%d applied=%d | supervisor=%s | recovery=%d%%\n",
       s->level_requested, s->level_applied, states[s->supervisor_state], s->recovery_percent);
     printf("Critical: jobs=%" PRIu64 " misses=%" PRIu64 " max_response=%" PRIu64 " us max_jitter=%" PRIu64 " us FIFO=%s\n",

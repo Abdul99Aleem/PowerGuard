@@ -27,6 +27,10 @@ obj/
 *.hex
 *.bin
 
+# Locally built standalone QNX testbench executables
+testbench/pgbench
+testbench/pgbench_ham
+
 # Trace, benchmark and logs (store approved evidence separately)
 results/
 *.kev
