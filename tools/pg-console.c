@@ -77,6 +77,8 @@ static void display(const bench *b, const pg_status *before) {
     printf("  CPU=%u%%  power=%u  NC1=%u%% NC2=%u%%  decision=%llu %s",
            s->cpu_peak_pct,s->power_index,s->nc1_pct,s->nc2_pct,
            (unsigned long long)s->decision_id,s->effective_ns ? "effective" : "awaiting effect");
+    if (s->unknown & PG_NC1) printf(" NC1-unknown");
+    if (s->unknown & PG_NC2) printf(" NC2-unknown");
     if (s->causes & TEMP) printf(" heat");
     if (s->causes & CPU) printf(" CPU-load");
     if (s->causes & POWER) printf(" power-demand");

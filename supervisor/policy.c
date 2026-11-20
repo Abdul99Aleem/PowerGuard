@@ -37,7 +37,13 @@ int pg_recovery_ready(const pg_policy *p) {
            p->status.power_index <= (unsigned)power.clear;
 }
 
-/* Publish a new cap target. It counts only once the manager confirms it. */
+static unsigned target_of(const pg_status *s, unsigned i) {
+    return i == 0 ? s->nc1_pct : s->nc2_pct;
+}
+
+/* Publish a new cap target. It counts only once each worker confirms it. A
+   worker already confirmed at that cap in this epoch is carried over, which
+   is how an already confirmed stop is skipped. */
 static void issue(pg_status *s, unsigned level, uint64_t now) {
     s->stage = level;
     s->nc1_pct = caps[level].nc1;
@@ -45,6 +51,23 @@ static void issue(pg_status *s, unsigned level, uint64_t now) {
     ++s->decision_id;
     s->issued_ns = now;
     s->effective_ns = 0;
+    s->decision_causes = s->causes;
+    s->confirmed = 0;
+    for (unsigned i = 0; i < 2; ++i) {
+        s->applied_ns[i] = 0;
+        if (s->applied_pct[i] == target_of(s, i)) {
+            s->confirmed |= 1u << i;
+            s->applied_ns[i] = now;
+        }
+    }
+    if (s->confirmed == PG_NC_BOTH) s->effective_ns = now;
+}
+
+/* Effects we can no longer vouch for. Those workers must confirm again. */
+static void mark_unknown(pg_status *s, unsigned workers) {
+    s->unknown |= workers;
+    for (unsigned i = 0; i < 2; ++i)
+        if (workers & (1u << i)) s->applied_pct[i] = PG_CAP_UNKNOWN;
 }
 
 /* Enter a restricting state. Caps are reissued only if their level changes. */
@@ -125,6 +148,7 @@ static void advance_fsm(pg_policy *p, unsigned required, int all_clear, uint64_t
 void pg_init(pg_policy *p, uint64_t now) {
     memset(p, 0, sizeof(*p));
     p->status.epoch = now;
+    p->status.applied_pct[0] = p->status.applied_pct[1] = PG_CAP_UNKNOWN;
     p->status.state = CRITICAL;
     issue(&p->status, CRITICAL, now);
     pg_tick(p, now);
@@ -189,16 +213,34 @@ void pg_ingest(pg_policy *p, const pg_sample *s, uint64_t now) {
     pg_tick(p, now);
 }
 
+/* Only the current decision of this epoch can be confirmed, at its own cap and
+   at a time between its issue and now. A repeat is accepted but changes
+   nothing, so neither a late nor a duplicate ACK can enable work. */
+int pg_worker_effect(pg_policy *p, uint64_t epoch, uint64_t id, unsigned nc,
+                     unsigned cap, uint64_t applied, uint64_t now) {
+    pg_status *s = &p->status;
+    if (nc != 1 && nc != 2) return 0;
+    unsigned i = nc - 1, bit = 1u << i;
+    if (epoch != s->epoch || id != s->decision_id ||
+        cap != target_of(s, i) || !applied || applied < s->issued_ns || applied > now)
+        return 0;
+    p->manager_seen_ns = now;
+    if (s->confirmed & bit) return 1;
+    s->confirmed |= bit;
+    s->unknown &= ~bit;
+    s->applied_ns[i] = applied;
+    s->applied_pct[i] = cap;
+    if (s->confirmed == PG_NC_BOTH)
+        s->effective_ns = s->applied_ns[0] > s->applied_ns[1] ? s->applied_ns[0] : s->applied_ns[1];
+    return 1;
+}
+
 int pg_effect(pg_policy *p, uint64_t epoch, uint64_t id, uint64_t effective,
               unsigned nc1, unsigned nc2, uint64_t now) {
     pg_status *s = &p->status;
-    if (epoch != s->epoch || id != s->decision_id || !effective ||
-        effective < s->issued_ns || effective > now ||
-        nc1 != s->nc1_pct || nc2 != s->nc2_pct) return 0;
-    if (s->effective_ns && s->effective_ns != effective) return 0;
-    p->manager_seen_ns = now;
-    s->effective_ns = effective;
-    return 1;
+    if (nc1 != s->nc1_pct || nc2 != s->nc2_pct) return 0; /* both or neither */
+    return pg_worker_effect(p, epoch, id, 1, nc1, effective, now) &&
+           pg_worker_effect(p, epoch, id, 2, nc2, effective, now);
 }
 
 void pg_tick(pg_policy *p, uint64_t now) {
@@ -251,12 +293,18 @@ void pg_tick(pg_policy *p, uint64_t now) {
         if (bands[i] > required) required = bands[i];
     }
     if (causes & (BAD_TEMP | BAD_LOAD | TEMP_EXPIRED | UNVERIFIED_FLAT)) required = CRITICAL;
+    /* The manager keeps confirming the target. If it falls silent, what it
+       reported can no longer be trusted, and the effect deadline below takes
+       over. The current decision is not reissued. */
     if (s->effective_ns && now - p->manager_seen_ns >= PG_LEASE) {
-        issue(s, CRITICAL, now);
-        causes |= WAIT_EFFECT;
-        required = CRITICAL;
+        s->effective_ns = 0;
+        s->confirmed = 0;
+        mark_unknown(s, PG_NC_BOTH);
     }
+    /* Missed effect deadline: the trial fails, and every worker that has not
+       confirmed is unknown. Critical still asks both to stop. */
     if (!s->effective_ns && now - s->issued_ns > PG_RESPONSE_TARGET) {
+        mark_unknown(s, PG_NC_BOTH & ~s->confirmed);
         causes |= WAIT_EFFECT;
         required = CRITICAL;
     }

@@ -135,6 +135,17 @@ int main(int argc, char **argv) {
                 MsgError(id, EINVAL); continue;
             }
             break;
+        case PG_WORKER_EFFECT:
+            pg_tick(&policy, now);
+            if (!pg_worker_effect(&policy, m->body.worker_effect.epoch,
+                                  m->body.worker_effect.decision_id, m->body.worker_effect.nc,
+                                  m->body.worker_effect.cap_pct,
+                                  m->body.worker_effect.applied_ns, now)) {
+                pg_observe(&metrics, &before, &policy);
+                trace_change(&before, &policy.status);
+                MsgError(id, EINVAL); continue;
+            }
+            break;
         case PG_READ:
             pg_tick(&policy, now);
             break;

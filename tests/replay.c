@@ -293,6 +293,96 @@ static void unverified_flat(void) {
     CHECK(r.p.status.state == NORMAL && !r.p.status.causes);
 }
 
+/* A step in which the manager stays silent. */
+static void step_quiet(rig *r) {
+    r->now += PG_TICK;
+    r->in.thermal_seq++;
+    r->in.acquired_ns = r->in.load_end_ns = r->now;
+    pg_ingest(&r->p, &r->in, r->now);
+}
+
+/* B4: each worker confirms for itself, and only the current decision. */
+static void worker_effects(void) {
+    rig r = after(PG_TEMP_WARN);
+    pg_status *s = &r.p.status;
+    CHECK(s->state == WARNING && s->effective_ns); /* same caps: nothing to wait for */
+    r.in.temp_deci_c = PG_TEMP_THROTTLE;
+    step_quiet(&r);
+    CHECK(s->state == THROTTLED && s->decision_causes == TEMP);
+    CHECK(s->confirmed == PG_NC1 && !s->effective_ns); /* NC1 keeps its cap */
+
+    uint64_t e = s->epoch, id = s->decision_id, t = r.now;
+    CHECK(!pg_worker_effect(&r.p, e + 1, id, 2, 0, t, t));          /* old epoch */
+    CHECK(!pg_worker_effect(&r.p, e, id - 1, 2, 0, t, t));          /* superseded */
+    CHECK(!pg_worker_effect(&r.p, e, id, 2, 100, t, t));            /* wrong cap */
+    CHECK(!pg_worker_effect(&r.p, e, id, 2, 0, s->issued_ns - 1, t)); /* before issue */
+    CHECK(!pg_worker_effect(&r.p, e, id, 2, 0, t + 1, t));          /* in the future */
+    CHECK(!pg_worker_effect(&r.p, e, id, 0, 0, t, t));              /* no such worker */
+    CHECK(!pg_worker_effect(&r.p, e, id, 3, 0, t, t));
+    CHECK(!s->effective_ns);
+    CHECK(pg_worker_effect(&r.p, e, id, 2, 0, t, t));
+    CHECK(s->effective_ns == t && s->applied_pct[1] == 0);
+    /* A repeat with a later time is accepted but moves nothing. */
+    CHECK(pg_worker_effect(&r.p, e, id, 2, 0, t + PG_MS, t + PG_MS) && s->effective_ns == t);
+
+    /* NC2 already confirmed its stop, so a Critical decision only waits for NC1. */
+    r.in.temp_deci_c = PG_TEMP_CRITICAL;
+    step_quiet(&r);
+    CHECK(s->state == CRITICAL && s->confirmed == PG_NC2 && s->applied_ns[1] == s->issued_ns);
+}
+
+/* B4: NC2 never answers. Both are asked to stop, NC1 still stops, and NC2
+   stays unknown until it confirms the current decision. */
+static void missed_effect(void) {
+    rig r = baseline();
+    pg_status *s = &r.p.status;
+    r.in.temp_deci_c = PG_TEMP_THROTTLE;
+    step_quiet(&r);
+    uint64_t throttle_id = s->decision_id;
+    pg_tick(&r.p, s->issued_ns + PG_RESPONSE_TARGET + 1);
+    CHECK(s->state == CRITICAL && (s->causes & WAIT_EFFECT) && s->unknown == PG_NC2);
+    CHECK(s->nc1_pct == 0 && s->nc2_pct == 0 && !s->confirmed);
+
+    uint64_t e = s->epoch, id = s->decision_id, t = s->as_of_ns;
+    CHECK(pg_worker_effect(&r.p, e, id, 1, 0, t, t));
+    CHECK(s->confirmed == PG_NC1 && s->unknown == PG_NC2 && !s->effective_ns);
+    CHECK(!pg_worker_effect(&r.p, e, throttle_id, 2, 0, t, t)); /* replayed old ACK */
+    CHECK(pg_worker_effect(&r.p, e, id, 2, 0, t, t));
+    CHECK(!s->unknown && s->effective_ns == t);
+}
+
+/* B4: a restore that is confirmed too late cannot reopen the worker. */
+static void late_restore(void) {
+    rig r = after(PG_TEMP_CRITICAL);
+    pg_status *s = &r.p.status;
+    r.in.temp_deci_c = PG_TEMP_CLEAR;
+    step(&r, 1);
+    while (r.now - s->clear_since_ns < PG_RESTORE_NC1 - PG_TICK) step(&r, 1);
+    step_quiet(&r);
+    CHECK(s->state == RECOVERY && s->nc1_pct == 100);
+    uint64_t restore_id = s->decision_id, applied = r.now;
+    while (s->state == RECOVERY) step_quiet(&r);
+    CHECK(s->state == CRITICAL && s->nc1_pct == 0);
+    CHECK(!pg_worker_effect(&r.p, s->epoch, restore_id, 1, 100, applied, r.now));
+    CHECK(s->nc1_pct == 0 && s->applied_pct[0] != 100);
+}
+
+/* B4: a silent manager leaves the state Critical and unconfirmed, without a
+   new decision every tick. Its return clears it. */
+static void silent_manager(void) {
+    rig r = after(PG_TEMP_CRITICAL);
+    pg_status *s = &r.p.status;
+    uint64_t id = s->decision_id;
+    r.in.temp_deci_c = PG_TEMP_CLEAR;
+    for (int i = 0; i < 300; ++i) step_quiet(&r);
+    CHECK(s->state == CRITICAL && s->decision_id == id);
+    CHECK(!s->effective_ns && s->unknown == PG_NC_BOTH && (s->causes & WAIT_EFFECT));
+    acknowledge(&r);
+    CHECK(s->effective_ns && !s->unknown);
+    run(&r, RECOVER_TICKS);
+    CHECK(s->state == NORMAL);
+}
+
 void metric_checks(void);
 int main(void) {
     metric_checks();
@@ -338,11 +428,11 @@ int main(void) {
     r.in.acquired_ns += PG_TICK; /* same sequence, rewritten acquisition time */
     step(&r,0); CHECK(r.p.status.causes & BAD_TEMP);
     r = baseline();
-    r.in.core_busy_pct[0]=75;
+    r.in.core_busy_pct[0]=85;
     pg_ingest(&r.p,&r.in,r.now);
-    CHECK(r.p.status.stage == WARNING);
+    CHECK(r.p.status.stage == THROTTLED);
     pg_tick(&r.p,r.now+PG_RESPONSE_TARGET);
-    CHECK(r.p.status.state == WARNING);
+    CHECK(r.p.status.state == THROTTLED);
     pg_tick(&r.p,r.now+PG_RESPONSE_TARGET+1);
     CHECK(r.p.status.state == CRITICAL && (r.p.status.causes & WAIT_EFFECT));
     r = baseline();
@@ -373,6 +463,10 @@ int main(void) {
     expiry_beats_restore();
     recovery_gap();
     unverified_flat();
+    worker_effects();
+    missed_effect();
+    late_restore();
+    silent_manager();
     puts("PASS: host policy replay assertions");
     return 0;
 }

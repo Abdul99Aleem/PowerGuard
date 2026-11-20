@@ -38,6 +38,11 @@
 #define PG_POWER_CRITICAL 90
 
 enum pg_state { NORMAL, WARNING, THROTTLED, CRITICAL, RECOVERY };
+/* Worker bits for confirmed and unknown. */
+#define PG_NC1 1u
+#define PG_NC2 2u
+#define PG_NC_BOTH (PG_NC1 | PG_NC2)
+#define PG_CAP_UNKNOWN UINT32_MAX /* no trusted confirmation in this epoch */
 enum pg_reason { TEMP = 1, CPU = 2, POWER = 4, BAD_TEMP = 8, BAD_LOAD = 16,
                  WAIT_EFFECT = 32, TEMP_EXPIRED = 64, UNVERIFIED_FLAT = 128 };
 enum pg_quality { UNAVAILABLE, GOOD, FROZEN, SENSOR_ERROR };
@@ -52,6 +57,11 @@ typedef struct {
 typedef struct {
     uint64_t epoch, decision_id, issued_ns, lease_until_ns, as_of_ns;
     uint64_t effective_ns, clear_since_ns;
+    uint64_t applied_ns[2];   /* when NC1 and NC2 applied the current decision */
+    uint32_t applied_pct[2];  /* last cap each worker confirmed, or PG_CAP_UNKNOWN */
+    uint32_t confirmed;       /* workers that confirmed the current decision */
+    uint32_t unknown;         /* workers whose effect missed its deadline */
+    uint32_t decision_causes; /* causes when the current decision was issued */
     uint32_t state, causes, cpu_peak_pct, power_index;
     uint32_t stage; /* cap level being applied, numbered like the states */
     uint32_t nc1_pct, nc2_pct; /* maximum fraction of each nominal budget */
@@ -75,7 +85,10 @@ int pg_recovery_ready(const pg_policy *);
 void pg_tick(pg_policy *p, uint64_t now);
 /* Absolute time the temperature expires without a newer valid reading, or 0. */
 uint64_t pg_age_deadline(const pg_policy *p);
-/* The manager sends this only after BOTH limits have taken effect. */
+/* One worker applied the current decision. nc is 1 or 2. */
+int pg_worker_effect(pg_policy *p, uint64_t epoch, uint64_t id, unsigned nc,
+                     unsigned cap, uint64_t applied, uint64_t now);
+/* Both workers applied the current decision at the same time. */
 int pg_effect(pg_policy *p, uint64_t epoch, uint64_t id, uint64_t effective,
               unsigned nc1, unsigned nc2, uint64_t now);
 #endif

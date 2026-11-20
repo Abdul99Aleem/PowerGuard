@@ -4,7 +4,8 @@
 
 #define PG_NAME "powerguard_k_v1"
 #define PG_VERSION 1
-enum pg_message { PG_READ = 0x700, PG_SAMPLE, PG_EFFECT, PG_SAMPLE_POWER, PG_JOB, PG_TRIAL, PG_SCORE };
+enum pg_message { PG_READ = 0x700, PG_SAMPLE, PG_EFFECT, PG_SAMPLE_POWER, PG_JOB, PG_TRIAL, PG_SCORE,
+                  PG_WORKER_EFFECT };
 typedef struct {
     uint16_t type, version;
     uint32_t reserved;
@@ -16,6 +17,10 @@ typedef struct {
             uint64_t epoch, decision_id, effective_ns;
             uint32_t nc1_pct, nc2_pct;
         } effect;
+        struct {
+            uint64_t epoch, decision_id, applied_ns;
+            uint32_t nc, cap_pct; /* nc is 1 or 2 */
+        } worker_effect;
     } body;
 } pg_message_v1;
 typedef struct {
