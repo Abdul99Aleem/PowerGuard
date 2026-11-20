@@ -1,3 +1,4 @@
 # The validated target runner must remain runnable after a Windows checkout.
 scripts/validate-threadctl.sh text eol=lf
 scripts/validate-startup-latch.sh text eol=lf
+scripts/jury-demo.sh text eol=lf

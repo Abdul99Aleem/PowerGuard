@@ -3,6 +3,10 @@
 **Deterministic Power and Thermal-Budget Management for QNX Edge Systems**  
 **Team Schedulix · QNX eHACK National Finals · QNXHACK-HYD-014**
 
+**Jury quick start on the prepared Pi:** `cd /tmp/pg-t3-merge-2111` then
+`sh jury-demo.sh 1 2 3 4`. The [jury runbook](docs/jury-runbook.md) gives the
+presentation sequence, commands and evidence locations. Submission scope is fixed.
+
 > **Project status:** The QNX 8 ThreadCtl runtime retains its independent enforcer and integrates teammate-3's workload and benchmark improvements. Pi tests cover 30 manager stalls, ten manager restarts, and a persistent supervisor-watchdog latch. See the [integration report](docs/teammate3-merge-validation.md) and [current checklist](docs/threadctl-checklist.md) for measured scopes, retained fault results and remaining real-thermal/LED qualification.
 
 ## Project goal

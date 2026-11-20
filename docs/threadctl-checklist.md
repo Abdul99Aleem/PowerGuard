@@ -33,6 +33,7 @@ See [the integration and validation report](teammate3-merge-validation.md) and
 | Benchmark failure propagation | Fixed: missed jobs and B/C budget violations fail the suite | Negative host/target qualification tests and positive Pi smoke tests pass |
 | Benchmark build integration | Fixed includes, feature definitions, dependencies and asset ordering | Root debug/release, default/handoff/overhead/HAM-suite builds pass |
 | Operator CLI and labelled source | Existing status retained; FORCED_OFF explicitly reported | Current target output and CLI assertions pass |
+| Interactive jury menu and command runbook | Complete; presentation wrapper around the validated binaries | All menu actions exercised on Pi, including fresh-run reset and clean exit; manager receipt 7.206833 ms, watchdog latch 225.451574 ms. See [runbook](jury-runbook.md) |
 
 Affinity limits where our workers execute. OS work, interrupts and shared cache
 contention remain possible on those CPUs. It is not a CPU reservation or power
