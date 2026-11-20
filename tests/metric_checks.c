@@ -47,8 +47,11 @@ void metric_checks(void) {
     REQUIRE(m.scores.misses==2 && m.scores.jobs==3 && m.scores.job_gaps==1);
     pg_sample in={.quality=GOOD,.source=REAL,.thermal_seq=1,.acquired_ns=100,.load_end_ns=100};
     pg_init(&p,99);
-    pg_ingest_power(&p,&in,80,100); REQUIRE(p.status.causes & POWER);
-    pg_ingest_power(&p,&in,101,100); REQUIRE(p.status.causes & BAD_LOAD);
+    in.nc_demand_pct[0]=in.nc_demand_pct[1]=80;
+    pg_ingest(&p,&in,100); REQUIRE(p.status.causes & POWER);
+    in.nc_demand_pct[1]=101;
+    pg_ingest(&p,&in,100); REQUIRE(p.status.causes & BAD_LOAD);
+    in.nc_demand_pct[0]=in.nc_demand_pct[1]=0;
     pg_ingest(&p,&in,100); REQUIRE(!(p.status.causes & (POWER|BAD_LOAD)));
-    puts("PASS: all five score calculations and independent power input");
+    puts("PASS: all five score calculations and power from requested demand");
 }

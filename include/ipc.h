@@ -9,7 +9,7 @@ typedef struct {
     uint16_t type, version;
     uint32_t reserved;
     union {
-        pg_sample sample; /* PG_SAMPLE_POWER uses reserved as unsigned index (0..100) */
+        pg_sample sample; /* PG_SAMPLE_POWER is treated as PG_SAMPLE; reserved is ignored */
         struct { uint64_t epoch, id, release_ns, deadline_ns, finish_ns; } job;
         struct { uint64_t epoch, trigger_ns; uint32_t series, from, to; } trial;
         struct {

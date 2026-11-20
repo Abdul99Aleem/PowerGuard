@@ -42,21 +42,83 @@ static rig baseline(void) {
     return r;
 }
 
+enum { SIGNAL_TEMP, SIGNAL_CPU, SIGNAL_POWER };
+
+static void set_signal(rig *r, int signal, int value) {
+    switch (signal) {
+    case SIGNAL_TEMP: r->in.temp_deci_c = value; break;
+    case SIGNAL_CPU: r->in.core_busy_pct[0] = value; break;
+    default: r->in.nc_demand_pct[0] = r->in.nc_demand_pct[1] = value; break;
+    }
+}
+
+static unsigned stage_for(int signal, int value) {
+    rig r = baseline();
+    set_signal(&r, signal, value);
+    step(&r, 1);
+    return r.p.status.stage;
+}
+
+/* Every limit is inclusive: one below it changes nothing, the limit itself acts. */
+static void limit_boundaries(void) {
+    static const int limit[3][3] = {
+        {PG_TEMP_WARN, PG_TEMP_THROTTLE, PG_TEMP_CRITICAL},
+        {PG_CPU_WARN, PG_CPU_THROTTLE, PG_CPU_CRITICAL},
+        {PG_POWER_WARN, PG_POWER_THROTTLE, PG_POWER_CRITICAL},
+    };
+    static const unsigned stage[3] = {1, 2, 4};
+    for (int signal = 0; signal < 3; ++signal)
+        for (int level = 0; level < 3; ++level) {
+            unsigned below = level ? stage[level - 1] : 0;
+            CHECK(stage_for(signal, limit[signal][level] - 1) == below);
+            CHECK(stage_for(signal, limit[signal][level]) == stage[level]);
+        }
+}
+
+/* Three severities at once: the strictest cap wins and every cause is kept. */
+static void simultaneous_faults(void) {
+    rig r = baseline();
+    set_signal(&r, SIGNAL_TEMP, PG_TEMP_THROTTLE);
+    set_signal(&r, SIGNAL_CPU, PG_CPU_CRITICAL);
+    set_signal(&r, SIGNAL_POWER, PG_POWER_WARN);
+    step(&r, 1);
+    CHECK(r.p.status.stage == 4 && r.p.status.state == CRITICAL);
+    CHECK(r.p.status.causes == (TEMP | CPU | POWER));
+}
+
+/* P = 0.4 NC1 + 0.6 NC2, rounded down (PRD page 3). */
+static void power_index(void) {
+    rig r = baseline();
+    r.in.nc_demand_pct[0] = 20; r.in.nc_demand_pct[1] = 90;
+    /* J2: 62 is a Warning pre-alarm, below the actionable Throttled limit. */
+    step(&r, 1);
+    CHECK(r.p.status.power_index == 62 && r.p.status.causes == POWER && r.p.status.stage == 1);
+    r.in.nc_demand_pct[0] = 25; r.in.nc_demand_pct[1] = 25;
+    step(&r, 1); CHECK(r.p.status.power_index == 25);
+    r.in.nc_demand_pct[0] = 1; r.in.nc_demand_pct[1] = 0;
+    step(&r, 1); CHECK(r.p.status.power_index == 0);
+    /* J5: both requests at 80 with U = 40 is Throttled on power alone. */
+    r.in.core_busy_pct[0] = 40;
+    r.in.nc_demand_pct[0] = r.in.nc_demand_pct[1] = 80;
+    step(&r, 1);
+    CHECK(r.p.status.power_index == 80 && r.p.status.causes == POWER && r.p.status.stage == 2);
+}
+
 void metric_checks(void);
 int main(void) {
     metric_checks();
     rig r = baseline();
     r.verbose = 1;
     puts("SIMULATED  gradual heat and staged recovery       NC1  NC2");
-    r.in.temp_deci_c = 649; step(&r,1); CHECK(r.p.status.state == NORMAL);
-    for (int t=650; t<=780; t++) {
+    r.in.temp_deci_c = PG_TEMP_WARN - 1; step(&r,1); CHECK(r.p.status.state == NORMAL);
+    for (int t=PG_TEMP_WARN; t<=PG_TEMP_CRITICAL; t++) {
         r.in.temp_deci_c = t; step(&r,1);
-        CHECK(r.p.status.stage == (unsigned)(t>=780 ? 4 : t>=700 ? 2 : 1));
+        CHECK(r.p.status.stage == (unsigned)(t>=PG_TEMP_CRITICAL ? 4 : t>=PG_TEMP_THROTTLE ? 2 : 1));
     }
-    r.in.temp_deci_c = 600;
+    r.in.temp_deci_c = PG_TEMP_CLEAR;
     run(&r,50); CHECK(r.p.status.stage == 4);
-    r.in.temp_deci_c = 601; step(&r,1); CHECK(!r.p.status.clear_since_ns);
-    r.in.temp_deci_c = 600;
+    r.in.temp_deci_c = PG_TEMP_CLEAR + 1; step(&r,1); CHECK(!r.p.status.clear_since_ns);
+    r.in.temp_deci_c = PG_TEMP_CLEAR;
     for (int stage=3; stage>=0; --stage) {
         run(&r,50); CHECK(r.p.status.stage == (unsigned)(stage+1));
         step(&r,1); CHECK(r.p.status.state == RECOVERY && r.p.status.stage == (unsigned)stage);
@@ -78,8 +140,7 @@ int main(void) {
     r.in.quality = GOOD; run(&r,270); CHECK(r.p.status.state == NORMAL);
 
     r = baseline();
-    for (int i=0;i<4;i++) r.in.core_busy_pct[i] = 60;
-    r.in.nc_demand_pct[0] = r.in.nc_demand_pct[1] = 100;
+    r.in.nc_demand_pct[0] = r.in.nc_demand_pct[1] = 80;
     step(&r,1); CHECK(r.p.status.causes == POWER && r.p.status.power_index == 80);
     CHECK(!pg_effect(&r.p,r.p.status.epoch,r.p.status.decision_id-1,r.now,100,0,r.now));
     r = baseline();
@@ -114,6 +175,9 @@ int main(void) {
     CHECK(r.p.status.stage == 2);
     r.in.core_busy_pct[1] = 95; step(&r,1);
     CHECK(r.p.status.stage == 4);
+    limit_boundaries();
+    simultaneous_faults();
+    power_index();
     puts("PASS: host policy replay assertions");
     return 0;
 }

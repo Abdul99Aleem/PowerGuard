@@ -15,9 +15,9 @@ static const struct {
 
 /* All three comparators include equality. Values in the gap hold the caps. */
 typedef struct { int clear, warn, throttle, critical; } limits;
-static const limits thermal = {600,650,700,780}; /* tenths of a degree C */
-static const limits cpu = {60,75,85,95};
-static const limits power = {55,70,80,90};
+static const limits thermal = {PG_TEMP_CLEAR, PG_TEMP_WARN, PG_TEMP_THROTTLE, PG_TEMP_CRITICAL};
+static const limits cpu = {PG_CPU_CLEAR, PG_CPU_WARN, PG_CPU_THROTTLE, PG_CPU_CRITICAL};
+static const limits power = {PG_POWER_CLEAR, PG_POWER_WARN, PG_POWER_THROTTLE, PG_POWER_CRITICAL};
 
 static unsigned severity(int value, limits l) {
     if (value >= l.critical) return 4;
@@ -102,7 +102,7 @@ static int fresh(uint64_t stamp, uint64_t now, uint64_t max_age) {
     return stamp != 0 && stamp <= now && now - stamp <= max_age;
 }
 
-static void ingest(pg_policy *p, const pg_sample *s, uint64_t now) {
+void pg_ingest(pg_policy *p, const pg_sample *s, uint64_t now) {
     if (s->acquired_ns > now) {
         p->bad_sequence = 1;
         pg_tick(p, now);
@@ -137,17 +137,6 @@ static void ingest(pg_policy *p, const pg_sample *s, uint64_t now) {
     pg_tick(p, now);
 }
 
-void pg_ingest(pg_policy *p, const pg_sample *s, uint64_t now) {
-    p->explicit_power = 0;
-    ingest(p,s,now);
-}
-
-void pg_ingest_power(pg_policy *p, const pg_sample *s, int index, uint64_t now) {
-    p->explicit_power = 1;
-    p->power_value = index;
-    ingest(p,s,now);
-}
-
 int pg_effect(pg_policy *p, uint64_t epoch, uint64_t id, uint64_t effective,
               unsigned nc1, unsigned nc2, uint64_t now) {
     pg_status *s = &p->status;
@@ -163,7 +152,7 @@ int pg_effect(pg_policy *p, uint64_t epoch, uint64_t id, uint64_t effective,
 void pg_tick(pg_policy *p, uint64_t now) {
     pg_status *s = &p->status;
     const pg_sample *in = &p->sample;
-    int peak = 0, sum = 0;
+    int peak = 0;
     unsigned required = 0, causes = 0;
     if (now - p->last_eval_ns > PG_CPU_MAX_AGE) {
         s->clear_since_ns = 0;
@@ -180,22 +169,20 @@ void pg_tick(pg_policy *p, uint64_t now) {
     for (unsigned i = 0; i < 4; ++i) {
         int busy = in->core_busy_pct[i];
         if (busy < 0 || busy > 100) { causes |= BAD_LOAD; continue; }
-        sum += busy;
         if (busy > peak) peak = busy;
     }
-    int demand = 0;
+    /* P = 0.4 * NC1 + 0.6 * NC2 from the pre-cap requests (PRD page 3). The
+       weights are in tenths, so dividing by 10 rounds down. Requests count
+       even while a worker is gated, which keeps P high until demand drops. */
+    static const int weight[2] = {4, 6};
+    int weighted = 0;
     for (unsigned i = 0; i < 2; ++i) {
         int requested = in->nc_demand_pct[i];
         if (requested < 0 || requested > 100) causes |= BAD_LOAD;
-        else demand += requested;
+        else weighted += weight[i] * requested;
     }
+    int index = weighted / 10;
     s->cpu_peak_pct = (unsigned)peak;
-    /* Equal weights on mean occupancy and mean pre-cap demand, rounded down. */
-    int index = (sum + 2*demand)/8;
-    if (p->explicit_power) {
-        if (p->power_value < 0 || p->power_value > 100) causes |= BAD_LOAD;
-        else index = p->power_value;
-    }
     s->power_index = (unsigned)index;
     unsigned bands[] = {severity(in->temp_deci_c, thermal), severity(peak,cpu),
                         severity(index,power)};

@@ -72,11 +72,8 @@ int main(int argc, char **argv) {
             m->version != PG_VERSION) { MsgError(id, EINVAL); continue; }
         switch (m->type) {
         case PG_SAMPLE:
+        case PG_SAMPLE_POWER: /* old senders; P is now derived from the demands */
             pg_ingest(&policy, &m->body.sample, now);
-            break;
-        case PG_SAMPLE_POWER:
-            pg_ingest_power(&policy, &m->body.sample,
-                            m->reserved <= 100 ? (int)m->reserved : -1, now);
             break;
         case PG_JOB:
             if (m->body.job.epoch != policy.status.epoch ||

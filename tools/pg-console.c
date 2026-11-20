@@ -87,7 +87,8 @@ static void display(const bench *b, const pg_status *before) {
     puts("");
 }
 
-static int frame(bench *b, int temp, const int cores[4], int power, int quality) {
+/* Both workers request the same duty, so the derived P equals the value typed. */
+static int frame(bench *b, int temp, const int cores[4], int demand, int quality) {
     uint64_t t = b->now + PG_TICK;
 #ifdef __QNXNTO__
     if (b->live) t = target_now();
@@ -102,16 +103,17 @@ static int frame(bench *b, int temp, const int cores[4], int power, int quality)
     } /* In stale mode the original acquisition is repeated verbatim. */
     s->load_end_ns = t;
     for (int i=0; i<4; ++i) s->core_busy_pct[i] = cores[i];
+    s->nc_demand_pct[0] = s->nc_demand_pct[1] = demand;
     b->now = t;
 #ifdef __QNXNTO__
     if (b->live) {
-        pg_message_v1 q = {.version=PG_VERSION,.type=PG_SAMPLE_POWER,.reserved=(uint32_t)power};
+        pg_message_v1 q = {.version=PG_VERSION,.type=PG_SAMPLE};
         q.body.sample = *s;
         return send_qnx(b,&q,&b->snap,sizeof(b->snap));
     }
 #endif
     pg_status old = b->policy.status;
-    pg_ingest_power(&b->policy,s,power,t);
+    pg_ingest(&b->policy,s,t);
     pg_observe(&b->metrics,&old,&b->policy);
     old = b->policy.status;
     /* Only the local bench models a 1 ms actuator. */

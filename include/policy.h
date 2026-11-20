@@ -11,6 +11,23 @@
 #define PG_LEASE (50 * PG_MS)
 #define PG_RESPONSE_TARGET (20 * PG_MS) /* experimental until frozen on Pi */
 
+/* Limits for each input (PRD page 7). Temperature is in tenths of a degree C,
+   U is the busiest core in percent and P is the 0..100 demand index.
+   Reaching an activation limit triggers it. Recovery time only accrues while
+   every input is at or below its clear level. */
+#define PG_TEMP_CLEAR 620
+#define PG_TEMP_WARN 650
+#define PG_TEMP_THROTTLE 700
+#define PG_TEMP_CRITICAL 750
+#define PG_CPU_CLEAR 55
+#define PG_CPU_WARN 70
+#define PG_CPU_THROTTLE 85
+#define PG_CPU_CRITICAL 95
+#define PG_POWER_CLEAR 45
+#define PG_POWER_WARN 60
+#define PG_POWER_THROTTLE 75
+#define PG_POWER_CRITICAL 90
+
 enum pg_state { NORMAL, WARNING, THROTTLED, CRITICAL, RECOVERY };
 enum pg_reason { TEMP = 1, CPU = 2, POWER = 4, BAD_TEMP = 8, BAD_LOAD = 16,
                  WAIT_EFFECT = 32 };
@@ -33,11 +50,10 @@ typedef struct {
     pg_sample sample;
     uint64_t last_eval_ns, manager_seen_ns;
     uint64_t healthy_since_ns;
-    int have_sample, bad_sequence, explicit_power, power_value;
+    int have_sample, bad_sequence;
 } pg_policy;
 void pg_init(pg_policy *p, uint64_t now);
 void pg_ingest(pg_policy *p, const pg_sample *s, uint64_t now);
-void pg_ingest_power(pg_policy *, const pg_sample *, int power_index, uint64_t now);
 int pg_activation_limit(unsigned signal, int value);
 int pg_recovery_ready(const pg_policy *);
 void pg_tick(pg_policy *p, uint64_t now);
