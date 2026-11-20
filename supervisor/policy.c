@@ -1,23 +1,14 @@
 #include "policy.h"
 #include <string.h>
 
-/* Background CPU caps, ordered from full service to maximum restriction. */
-static const struct {
-    enum pg_state state;
-    unsigned nc1_percent, nc2_percent;
-} stages[] = {
-    { NORMAL,    100, 100 },
-    { WARNING,   100,  50 },
-    { THROTTLED, 100,   0 },
-    { THROTTLED,  50,   0 },  /* halfway through restoring NC1 */
-    { CRITICAL,    0,   0 }
-};
+/* Keep the v1 stage numbers used in status and trace records. */
+enum cap_stage { FULL = 0, NC2_OFF = 2, BOTH_OFF = 4 };
 
 /* All three comparators include equality. Values in the gap hold the caps. */
 typedef struct { int clear, warn, throttle, critical; } limits;
-static const limits thermal = {600,650,700,780}; /* tenths of a degree C */
-static const limits cpu = {60,75,85,95};
-static const limits power = {55,70,80,90};
+static const limits thermal = {620,650,700,750}; /* tenths of a degree C */
+static const limits cpu = {55,70,85,95};
+static const limits power = {45,60,75,90};
 
 static unsigned severity(int value, limits l) {
     if (value >= l.critical) return 4;
@@ -42,51 +33,52 @@ int pg_recovery_ready(const pg_policy *p) {
 
 static void set_stage(pg_status *s, unsigned stage, uint64_t now) {
     s->stage = stage;
-    s->nc1_pct = stages[stage].nc1_percent;
-    s->nc2_pct = stages[stage].nc2_percent;
+    s->nc1_pct = stage == BOTH_OFF ? 0 : 100;
+    s->nc2_pct = stage == FULL ? 100 : 0;
     ++s->decision_id;
     s->issued_ns = now;
     s->effective_ns = 0;
     s->clear_since_ns = 0;
 }
 
-/* The supervisor FSM. A larger stage gives the background workers less CPU. */
-static void advance_fsm(pg_status *s, unsigned required_stage,
-                        int below_recovery_limits, uint64_t now) {
-    /* From any state, a fault or overload immediately enforces the tighter cap. */
-    if (required_stage != 0) {
-        if (required_stage > s->stage) set_stage(s, required_stage, now);
-        s->state = stages[s->stage].state;
+/* Only this function relaxes caps. A broken recovery restores its entry caps. */
+static void advance_fsm(pg_policy *p, unsigned severity, int clear, uint64_t now) {
+    pg_status *s = &p->status;
+    if (!clear) {
+        unsigned hold = s->state == RECOVERY ? p->recovery_origin : s->stage;
+        if (severity >= NC2_OFF && severity > hold) hold = severity;
+        if (hold != s->stage) set_stage(s, hold, now);
+        if (hold == BOTH_OFF) s->state = CRITICAL;
+        else if (hold == NC2_OFF) s->state = THROTTLED;
+        else if (severity) s->state = WARNING;
         s->clear_since_ns = 0;
         return;
     }
-
-    /* A release requires continuous headroom and confirmation of the last cap. */
-    if (!below_recovery_limits || !s->effective_ns) {
+    if (!s->effective_ns || s->state == NORMAL) return;
+    if (s->state == RECOVERY && s->stage == FULL) {
+        s->state = NORMAL;
         s->clear_since_ns = 0;
         return;
     }
-    if (s->state == NORMAL) return;
-    if (!s->clear_since_ns) s->clear_since_ns = now;
-    if (now - s->clear_since_ns < PG_DWELL) return;
-
-    switch (s->state) {
-    case CRITICAL:
-    case THROTTLED:
-    case WARNING:
+    if (s->state == CRITICAL || s->state == THROTTLED) {
+        p->recovery_origin = s->stage;
         s->state = RECOVERY;
-        set_stage(s, s->stage - 1, now);
-        break;
-    case RECOVERY:
-        if (s->stage > 0) {
-            set_stage(s, s->stage - 1, now);
-        } else {
-            s->state = NORMAL;
-            s->clear_since_ns = 0;
-        }
-        break;
-    case NORMAL:
-        break;
+    }
+    if (!s->clear_since_ns) {
+        s->clear_since_ns = now;
+    }
+    uint64_t dwell = PG_DWELL;
+    if (s->state == RECOVERY && s->stage == NC2_OFF)
+        dwell = p->recovery_origin == BOTH_OFF ? PG_RESTORE_DWELL : PG_DWELL + PG_RESTORE_DWELL;
+
+    /* A timer or a repeated status read cannot serve as a new clear sample. */
+    uint64_t due = s->clear_since_ns + dwell;
+    if (p->sample.acquired_ns < due || p->sample.load_end_ns < due) return;
+    if (s->state == WARNING) {
+        s->state = NORMAL;
+        s->clear_since_ns = 0;
+    } else {
+        set_stage(s, s->stage == BOTH_OFF ? NC2_OFF : FULL, now);
     }
 }
 
@@ -94,13 +86,17 @@ void pg_init(pg_policy *p, uint64_t now) {
     memset(p, 0, sizeof(*p));
     p->status.epoch = now;
     p->status.state = CRITICAL;
-    set_stage(&p->status, 4, now);
+    set_stage(&p->status, BOTH_OFF, now);
     pg_tick(p, now);
 }
 
 static int fresh(uint64_t stamp, uint64_t now, uint64_t max_age) {
-    return stamp != 0 && stamp <= now && now - stamp <= max_age;
+    return stamp != 0 && stamp <= now && now - stamp < max_age;
 }
+
+static void evaluate(pg_policy *p, uint64_t now, unsigned causes, uint64_t detected, int gap);
+
+static uint64_t earlier(uint64_t a, uint64_t b) { return a < b ? a : b; }
 
 static void ingest(pg_policy *p, const pg_sample *s, uint64_t now) {
     if (s->acquired_ns > now) {
@@ -123,18 +119,38 @@ static void ingest(pg_policy *p, const pg_sample *s, uint64_t now) {
     }
     if (!p->have_sample || s->thermal_seq > p->sample.thermal_seq)
         p->bad_sequence = 0;
-    if (s->quality != GOOD || s->acquired_ns > now) p->bad_sequence = 1;
-    if (p->have_sample && (!fresh(p->sample.acquired_ns, now, PG_TEMP_MAX_AGE) ||
-        !fresh(p->sample.load_end_ns, now, PG_CPU_MAX_AGE))) {
-        p->status.clear_since_ns = 0;
-        p->healthy_since_ns = 0;
+    if (s->quality != GOOD && s->quality != READ_ONLY) p->bad_sequence = 1;
+
+    /* An arrival cannot erase an expiry which fell between dispatches. */
+    unsigned expired = 0;
+    uint64_t detected = now;
+    int gap = 0;
+    if (p->have_sample) {
+        if (!fresh(p->sample.acquired_ns, now, PG_TEMP_MAX_AGE)) {
+            expired |= BAD_TEMP;
+            detected = earlier(detected, p->sample.acquired_ns + PG_TEMP_MAX_AGE);
+        }
+        if (!fresh(p->sample.load_end_ns, now, PG_CPU_MAX_AGE)) {
+            expired |= BAD_LOAD;
+            detected = earlier(detected, p->sample.load_end_ns + PG_CPU_MAX_AGE);
+        }
+        if (p->sample.quality == READ_ONLY && now - p->flat_since_ns >= PG_FLAT_LIMIT &&
+            !(p->status.causes & BAD_TEMP)) {
+            expired |= BAD_TEMP;
+            detected = earlier(detected, p->flat_since_ns + PG_FLAT_LIMIT);
+        }
+        gap = (s->acquired_ns > p->sample.acquired_ns + PG_RECOVERY_MAX_GAP ||
+               s->load_end_ns > p->sample.load_end_ns + PG_RECOVERY_MAX_GAP);
     }
+    if (!p->have_sample || s->quality != READ_ONLY || p->sample.quality != READ_ONLY ||
+        s->temp_deci_c != p->sample.temp_deci_c || s->source != p->sample.source)
+        p->flat_since_ns = s->acquired_ns;
     int bad_load_stamp = s->load_end_ns > now ||
         (p->have_sample && s->load_end_ns < p->sample.load_end_ns);
     p->sample = *s;
     if (bad_load_stamp) p->sample.load_end_ns = 0;
     p->have_sample = 1;
-    pg_tick(p, now);
+    evaluate(p, now, expired, detected, gap);
 }
 
 void pg_ingest(pg_policy *p, const pg_sample *s, uint64_t now) {
@@ -160,19 +176,15 @@ int pg_effect(pg_policy *p, uint64_t epoch, uint64_t id, uint64_t effective,
     return 1;
 }
 
-void pg_tick(pg_policy *p, uint64_t now) {
+static void evaluate(pg_policy *p, uint64_t now, unsigned causes, uint64_t detected, int gap) {
     pg_status *s = &p->status;
     const pg_sample *in = &p->sample;
-    int peak = 0, sum = 0;
-    unsigned required = 0, causes = 0;
-    if (now - p->last_eval_ns > PG_CPU_MAX_AGE) {
-        s->clear_since_ns = 0;
-        p->healthy_since_ns = 0;
-    }
-    p->last_eval_ns = now;
+    int peak = 0;
+    unsigned required = 0;
     s->as_of_ns = now;
     s->lease_until_ns = now + PG_LEASE;
-    if (!p->have_sample || p->bad_sequence || in->quality != GOOD ||
+    if (!p->have_sample || p->bad_sequence || (in->quality != GOOD && in->quality != READ_ONLY) ||
+        (in->quality == READ_ONLY && now - p->flat_since_ns >= PG_FLAT_LIMIT) ||
         (in->source != REAL && in->source != SIMULATED) ||
         !in->thermal_seq || !fresh(in->acquired_ns, now, PG_TEMP_MAX_AGE) ||
         in->temp_deci_c < -400 || in->temp_deci_c > 1250) causes |= BAD_TEMP;
@@ -180,18 +192,17 @@ void pg_tick(pg_policy *p, uint64_t now) {
     for (unsigned i = 0; i < 4; ++i) {
         int busy = in->core_busy_pct[i];
         if (busy < 0 || busy > 100) { causes |= BAD_LOAD; continue; }
-        sum += busy;
         if (busy > peak) peak = busy;
     }
-    int demand = 0;
+    int weighted_demand = 0;
     for (unsigned i = 0; i < 2; ++i) {
         int requested = in->nc_demand_pct[i];
         if (requested < 0 || requested > 100) causes |= BAD_LOAD;
-        else demand += requested;
+        else weighted_demand += (i == 0 ? 2 : 3) * requested;
     }
     s->cpu_peak_pct = (unsigned)peak;
-    /* Equal weights on mean occupancy and mean pre-cap demand, rounded down. */
-    int index = (sum + 2*demand)/8;
+    /* 40% NC1 and 60% NC2 pre-cap demand, rounded down. */
+    int index = weighted_demand / 5;
     if (p->explicit_power) {
         if (p->power_value < 0 || p->power_value > 100) causes |= BAD_LOAD;
         else index = p->power_value;
@@ -205,6 +216,17 @@ void pg_tick(pg_policy *p, uint64_t now) {
         if (bands[i] > required) required = bands[i];
     }
     if (causes & (BAD_TEMP | BAD_LOAD)) required = 4;
+    /* Score from the qualifying measurement or its expiry, including IPC delay. */
+    if (p->have_sample) {
+        if (bands[0] == required && bands[0] >= NC2_OFF && !(causes & BAD_TEMP))
+            detected = earlier(detected, in->acquired_ns);
+        if ((bands[1] == required || bands[2] == required) && required >= NC2_OFF && !(causes & BAD_LOAD))
+            detected = earlier(detected, in->load_end_ns);
+        if (in->acquired_ns) detected = earlier(detected, in->acquired_ns + PG_TEMP_MAX_AGE);
+        if (in->load_end_ns) detected = earlier(detected, in->load_end_ns + PG_CPU_MAX_AGE);
+        if (in->quality == READ_ONLY) detected = earlier(detected, p->flat_since_ns + PG_FLAT_LIMIT);
+    }
+    unsigned previous_stage = s->stage;
     if (s->effective_ns && now - p->manager_seen_ns >= PG_LEASE) {
         set_stage(s, 4, now);
         causes |= WAIT_EFFECT;
@@ -215,7 +237,31 @@ void pg_tick(pg_policy *p, uint64_t now) {
         required = 4;
     }
     s->causes = causes;
-    if (!pg_recovery_ready(p)) p->healthy_since_ns = 0;
+    int clear = pg_recovery_ready(p) && !gap;
+    if (!clear) p->healthy_since_ns = 0;
     else if (!p->healthy_since_ns) p->healthy_since_ns = now;
-    advance_fsm(s, required, pg_recovery_ready(p), now);
+    advance_fsm(p, required, clear, now);
+    if (s->stage > previous_stage) p->restriction_from_ns = detected;
+}
+
+void pg_tick(pg_policy *p, uint64_t now) {
+    evaluate(p, now, 0, now, 0);
+}
+
+/* Dwell ends only on new evidence; silence needs timers for faults alone. */
+uint64_t pg_next_deadline(const pg_policy *p) {
+    const pg_status *s = &p->status;
+    uint64_t manager_deadline = s->effective_ns ? p->manager_seen_ns + PG_LEASE :
+                                s->issued_ns + PG_RESPONSE_TARGET + 1;
+    const uint64_t deadlines[] = {
+        manager_deadline,
+        p->have_sample ? p->sample.acquired_ns + PG_TEMP_MAX_AGE : 0,
+        p->have_sample ? p->sample.load_end_ns + PG_CPU_MAX_AGE : 0,
+        p->sample.quality == READ_ONLY ? p->flat_since_ns + PG_FLAT_LIMIT : 0
+    };
+    uint64_t next = 0;
+    for (unsigned i = 0; i < sizeof(deadlines) / sizeof(deadlines[0]); ++i)
+        if (deadlines[i] > s->as_of_ns && (!next || deadlines[i] < next))
+            next = deadlines[i];
+    return next;
 }

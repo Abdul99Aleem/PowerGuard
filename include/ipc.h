@@ -10,6 +10,7 @@ typedef struct {
     uint32_t reserved;
     union {
         pg_sample sample; /* PG_SAMPLE_POWER uses reserved as unsigned index (0..100) */
+        /* deadline_ns is a duration relative to release_ns (v1 contract). */
         struct { uint64_t epoch, id, release_ns, deadline_ns, finish_ns; } job;
         struct { uint64_t epoch, trigger_ns; uint32_t series, from, to; } trial;
         struct {

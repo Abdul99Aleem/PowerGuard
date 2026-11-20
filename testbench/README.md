@@ -81,11 +81,11 @@ while the manager is running.
 
 ## Measurement definitions and limitations
 
-- Critical job: 20 ms release period, 20 ms relative deadline, ~1 ms busy work. `max_response_us` measures planned release → completion and `max_jitter_us` measures planned release → actual start. Misses are jobs completed after their deadlines. If the worker falls behind enough to skip releases, skipped releases are not currently counted; do not present miss count as a hard worst-case guarantee.
+- The critical worker releases every 10 ms with a 5 ms relative deadline and approximately 1 ms of synthetic work. The bench counts late jobs and skipped releases. The supervisor bridge forwards the latest job and exposes gaps in the records it received.
 - NC1 approximates a 20% duty cycle per 100 ms; NC2 15%, or 90% in spike scenario. Exact percentages vary under scheduling contention; work is simulated CPU demand, not power watts.
 - `process_cpu_per_core_tenths` uses `CLOCK_PROCESS_CPUTIME_ID`: process CPU consumption relative to **one core**, not whole-system CPU usage. It may exceed 100% for a multithreaded process on multiple cores; it must not be labeled global CPU utilization.
 - Temperature is software-generated, in m°C. The ramp rises 1°C/s to +35°C over baseline. Freeze updates four samples then leaves the same sample and its original timestamp; sensor age should grow.
-- Supervisor state and recovery percent are **reported annotations**, not computed by this app. Thresholds, hysteresis, stale-sensor conservative action, estimated power, independent lease/fail-safe, physical LEDs, actual CPU budget enforcement, and system-wide utilization remain teammate/integration tasks.
+- The supervisor supplies state and recovery annotations. Workers start closed and enforce the expiry of managed grants locally. The independent watchdog, board telemetry, and target timing qualification are separate integration tasks.
 - NC levels are cooperative workload suspension and acknowledgement, **not OS-enforced budgets or a process stop**. Acknowledgment is observable but not equivalent to resource manager enforcement.
 - The critical worker *attempts* SCHED_FIFO priority 20 and reports whether it was granted; do not claim deterministic priority behavior if it falls back.
 - Optional HAM requires a running, configured HAM daemon, a reachable `libham`, adequate permissions, an executable absolute path, and suitable boot image.

@@ -45,6 +45,9 @@ void metric_checks(void) {
     REQUIRE(!pg_job(&m,2,20,10,31,40) && !pg_job(&m,3,40,10,0,50));
     REQUIRE(pg_job(&m,4,40,10,0,51));
     REQUIRE(m.scores.misses==2 && m.scores.jobs==3 && m.scores.job_gaps==1);
+    REQUIRE(pg_job_budget_ns(1000, 999) == 0);
+    REQUIRE(pg_job(&m,5,1000,pg_job_budget_ns(1000,1020),1025,1030));
+    REQUIRE(m.scores.misses==3);
     pg_sample in={.quality=GOOD,.source=REAL,.thermal_seq=1,.acquired_ns=100,.load_end_ns=100};
     pg_init(&p,99);
     pg_ingest_power(&p,&in,80,100); REQUIRE(p.status.causes & POWER);

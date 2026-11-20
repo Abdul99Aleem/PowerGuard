@@ -44,8 +44,10 @@ void pg_observe(pg_metrics *m, const pg_status *old, const pg_policy *p) {
         } else ++r->cancelled_trials;
         m->trial_ns = 0;
     }
-    if (s->state == NORMAL) m->started_normal = 1;
-    if (!m->started_normal) return; /* exclude safe startup from experiment metrics */
+    if (!m->started_normal) {
+        if (s->state == NORMAL) m->started_normal = 1;
+        return; /* exclude safe startup from experiment metrics */
+    }
 
     int values[] = {p->sample.temp_deci_c,(int)s->cpu_peak_pct,(int)s->power_index};
     int valid[] = {!(s->causes & BAD_TEMP), !(s->causes & BAD_LOAD), !(s->causes & BAD_LOAD)};
@@ -54,7 +56,7 @@ void pg_observe(pg_metrics *m, const pg_status *old, const pg_policy *p) {
         if (s->stage > old->stage) {
             ++r->issued;
             r->pending_id = s->decision_id;
-            m->pending_ns = s->issued_ns;
+            m->pending_ns = p->restriction_from_ns ? p->restriction_from_ns : s->issued_ns;
             for (unsigned i=0; i<3; ++i) {
                 int limit = pg_activation_limit(i, values[i]);
                 if (limit < 0 || !valid[i]) continue;
@@ -90,7 +92,7 @@ void pg_observe(pg_metrics *m, const pg_status *old, const pg_policy *p) {
             r->pending_id = 0;
         }
     }
-    if (s->stage == 0 && s->state == RECOVERY && s->effective_ns &&
+    if (s->stage == 0 && (s->state == RECOVERY || old->state == RECOVERY) && s->effective_ns &&
         p->healthy_since_ns && s->effective_ns >= p->healthy_since_ns &&
         s->decision_id != m->last_restore_id) {
         m->last_restore_id = s->decision_id;

@@ -10,7 +10,7 @@
  */
 #define PG_BENCH_NAME "powerguard_bench"
 #define PG_BENCH_TYPE 0x2001u
-#define PG_BENCH_VERSION 1u
+#define PG_BENCH_VERSION 2u
 
 enum pg_command {
     PG_CMD_STATUS = 1,
@@ -20,7 +20,8 @@ enum pg_command {
     PG_CMD_STOP = 5,
     /* Exact NC1/NC2 caps.  This is used by pg-manager; PG_CMD_LEVEL remains
        available for the original manual demo CLI. */
-    PG_CMD_CAPS = 6
+    PG_CMD_CAPS = 6,
+    PG_CMD_LEASED_CAPS
 };
 
 enum pg_scenario {
@@ -50,6 +51,11 @@ typedef struct {
 } pg_request_t;
 
 typedef struct {
+    pg_request_t request;
+    uint64_t epoch, decision_id, until_ns;
+} pg_cap_request_t;
+
+typedef struct {
     int32_t error;                /* 0 = success, otherwise POSIX errno */
     int32_t scenario;
     int32_t level_requested;
@@ -75,6 +81,8 @@ typedef struct {
     uint64_t last_job_release_ns;
     uint64_t last_job_deadline_ns;
     uint64_t last_job_finish_ns;
+    uint64_t thermal_acquired_ns, cpu_window_end_ns;
+    uint64_t applied_epoch, applied_decision_id;
 } pg_status_t;
 
 #endif

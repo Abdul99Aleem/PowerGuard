@@ -42,15 +42,29 @@ int main(int argc, char **argv) {
     SIGEV_PULSE_INIT(&event, coid, (int)priority, _PULSE_CODE_MINAVAIL, 0);
     timer_t timer;
     struct itimerspec tolerance = {.it_value = {.tv_nsec = 1}};
-    struct itimerspec tick = {.it_interval = {.tv_nsec = PG_TICK},
-                              .it_value = {.tv_nsec = PG_TICK}};
     if (timer_create(CLOCK_MONOTONIC, &event, &timer) == -1 ||
-        timer_settime(timer, TIMER_TOLERANCE, &tolerance, NULL) == -1 ||
-        timer_settime(timer, 0, &tick, NULL) == -1) { perror("policy timer"); return 1; }
+        timer_settime(timer, TIMER_TOLERANCE, &tolerance, NULL) == -1) {
+        perror("policy timer");
+        return 1;
+    }
+
     pg_metrics metrics = {0};
     pg_policy policy;
     pg_init(&policy, monotonic_ns());
+    uint64_t armed_ns = 0;
     for (;;) {
+        uint64_t next = pg_next_deadline(&policy);
+        if (next != armed_ns) {
+            struct itimerspec expiry = {
+                .it_value = {.tv_sec = next / UINT64_C(1000000000),
+                             .tv_nsec = next % UINT64_C(1000000000)}
+            };
+            if (timer_settime(timer, TIMER_ABSTIME, &expiry, NULL) == -1) {
+                perror("arm policy deadline");
+                return 1;
+            }
+            armed_ns = next;
+        }
         union { struct _pulse pulse; pg_message_v1 message; } in;
         struct _msg_info info;
         rcvid_t id = MsgReceive(server->chid, &in, sizeof(in), &info);
@@ -58,7 +72,10 @@ int main(int argc, char **argv) {
         uint64_t now = monotonic_ns();
         pg_status before = policy.status;
         if (id == 0) {
-            if (in.pulse.code == _PULSE_CODE_MINAVAIL) pg_tick(&policy, now);
+            if (in.pulse.code == _PULSE_CODE_MINAVAIL) {
+                armed_ns = 0;
+                pg_tick(&policy, now);
+            }
             pg_observe(&metrics, &before, &policy);
             trace_change(&before, &policy.status);
             if (in.pulse.code == _PULSE_CODE_DISCONNECT) ConnectDetach(in.pulse.scoid);

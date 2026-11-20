@@ -58,3 +58,4 @@ for a poll. During a state change it turns the previous LED off before
 turning the next one on. Verify that all five go dark when the supervisor
 is unavailable, that the current state appears again after the supervisor
 restarts, and that all five go dark on Ctrl+C or SIGTERM.
+Rebuild pg-manager and pgbench together for bench protocol v2. The supervisor remains on PG_VERSION 1. Workers start closed. The manager renews absolute 50 ms grants and the workers reject expired or superseded grants. A stalled manager cannot renew a grant. In a managed run, use scenario commands to change inputs. Manual level commands are for a standalone bench. An independently verified source and genuine per-core measurements still need to be supplied by the board monitor. The current testbench reports an explicitly simulated temperature and uses process CPU as its load proxy.

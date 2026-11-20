@@ -83,7 +83,7 @@ static void display(const bench *b, const pg_status *before) {
     if (s->causes & BAD_TEMP) printf(" invalid-temperature");
     if (s->causes & BAD_LOAD) printf(" invalid-load");
     if (s->causes & WAIT_EFFECT) printf(" manager-timeout");
-    if (s->clear_since_ns) printf("  dwell=%.0f/500 ms",ms(s->as_of_ns-s->clear_since_ns));
+    if (s->clear_since_ns) printf("  clear dwell=%.0f ms",ms(s->as_of_ns-s->clear_since_ns));
     puts("");
 }
 
@@ -291,7 +291,7 @@ int main(int argc,char **argv) {
         b.now=PG_MS;
         pg_init(&b.policy,b.now);
         int quiet[4]={0};
-        for (int i=0;i<270;i++) if (!frame(&b,500,quiet,20,GOOD)) return 1;
+        for (int i=0;i<320;i++) if (!frame(&b,500,quiet,20,GOOD)) return 1;
     }
     if (first<argc) {
         int result=command(&b,argc-first,argv+first);
@@ -299,9 +299,9 @@ int main(int argc,char **argv) {
         return result == 1 ? 0 : 2;
     }
     if (example) {
-        const char *script[]={"trial 1 Throttled","55 86 30","job 7 10","55 30 30 good 2000",
-            "trial 1 Throttled","55 86 30","job 12 10","55 30 30 good 2000",
-            "66 20 20","71 20 20","55 20 20 frozen","55 20 20 good 3000","scores"};
+        const char *script[]={"trial 1 Throttled","55 86 30","job 7 10","55 30 30 good 3100",
+            "trial 1 Throttled","55 86 30","job 12 10","55 30 30 good 3100",
+            "66 20 20","71 20 20","55 20 20 frozen","55 20 20 good 3100","scores"};
         for (unsigned i=0;i<sizeof(script)/sizeof(*script);++i) {
             char buf[80]; strcpy(buf,script[i]); puts(script[i]);
             if (line(&b,buf)!=1) return 1;

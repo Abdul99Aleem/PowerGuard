@@ -2,7 +2,21 @@
 
 19 November 2026. Branch `feature/PG-14-powerguard-supervisor`, base commit `ceee8c4`, with timestamped Console logging in the working tree.
 
-## Implementation
+## GPIO branch supervisor contract
+
+The supervisor uses a monotonic one-shot pulse timer for the next sensor, worker-confirmation or lease deadline. Recovery advances only on fresh measurements. Publish source timestamps and ordered evidence at the 25 ms acquisition cadence, including samples collected between change notifications. A gap over 35 ms breaks a recovery dwell. Both temperature and CPU expire at 150 ms, including equality. Use GOOD for a verified acquisition and READ_ONLY for a raw reading without conversion identity. An unchanged READ_ONLY code for 2 s enters Critical.
+
+| Input | Clear at or below | Warning | Throttled | Critical |
+| --- | ---: | ---: | ---: | ---: |
+| Temperature (°C) | 62 | 65 | 70 | 75 |
+| Busiest core (%) | 55 | 70 | 85 | 95 |
+| Demand index | 45 | 60 | 75 | 90 |
+
+Warning retains capacity. Throttled closes NC2. Critical closes both. After 2 s of continuous headroom restore NC1, then require another 1 s after its confirmation before restoring NC2. A rebound during Recovery reinstates the entry restriction. PG_SAMPLE computes the index from 40% NC1 and 60% NC2 requested duty. PG_SAMPLE_POWER accepts an explicit index. PG_JOB v1 uses a relative deadline duration. A missing job record makes a zero-miss claim incomplete.
+
+Restriction scoring includes transit time from the qualifying measurement (or its freshness expiry) to the matched worker effect. Run the release build on the target under load to qualify the 20 ms deadline and CPU budget. The scorecard below is historical.
+
+## Previous branch implementation and measurements
 
 The QNX service receives samples and acknowledgements through native message passing. A 10 ms monotonic timer also wakes the supervisor when the sensor is silent. The policy limits NC2 before NC1 and restores NC1 before NC2. Safe observations require temperature at most 60 °C, busiest-core occupancy at most 60%, and power index at most 55. Temperature may be up to 250 ms old and CPU telemetry up to 50 ms old. Each release step requires manager confirmation and 500 ms of continuous headroom. An expired manager heartbeat or invalid telemetry triggers conservative limits.
 

@@ -18,8 +18,8 @@
 #include <sys/select.h>
 
 #define NS 1000000000ULL
-#define PERIOD_NS 20000000ULL  /* 20 ms periodic critical job */
-#define DEADLINE_NS 20000000ULL
+#define PERIOD_NS 10000000ULL
+#define DEADLINE_NS 5000000ULL
 #define JOB_NS 1000000ULL     /* approximate 1 ms CPU burn */
 #define WORKER_NS 10000000ULL    /* 10 ms: meets the supervisor's 50 ms lease */
 #define TELEMETRY_NS 10000000ULL /* 10 ms: meets the supervisor's CPU freshness */
@@ -27,8 +27,10 @@ static pthread_mutex_t mu = PTHREAD_MUTEX_INITIALIZER;
 static volatile sig_atomic_t running = 1;
 static pg_status_t st;
 static uint64_t start_ns, last_sensor_ns, last_tick_ns, last_cpu_ns;
-static int level = 0, scenario = PG_SC_NORMAL, current_state = PG_ST_UNKNOWN;
-static int nc1_cap = 100, nc2_cap = 100;
+static int level = 2, scenario = PG_SC_NORMAL, current_state = PG_ST_UNKNOWN;
+static int nc1_cap, nc2_cap;
+static int stop_nc1_after_nc2;
+static uint64_t cap_epoch, cap_id, lease_until_ns;
 static uint64_t level_command_ns, ack_ns[2], recover_ns;
 static uint64_t scenario_started_ns;
 
@@ -40,8 +42,7 @@ static void sleep_until(uint64_t when) {
     struct timespec t = { (time_t)(when / NS), (long)(when % NS) };
     while (clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &t, NULL) == EINTR) {}
 }
-static void burn_for(uint64_t ns) {
-    uint64_t until = now_ns(CLOCK_MONOTONIC) + ns;
+static void burn_until(uint64_t until) {
     volatile unsigned long x = 1;
     while (now_ns(CLOCK_MONOTONIC) < until) x = x * 1664525UL + 1013904223UL;
     (void)x;
@@ -59,7 +60,7 @@ static void *critical_worker(void *unused) {
         sleep_until(release);
         if (!running) break;
         uint64_t began = now_ns(CLOCK_MONOTONIC);
-        burn_for(JOB_NS);
+        burn_until(now_ns(CLOCK_MONOTONIC) + JOB_NS);
         uint64_t ended = now_ns(CLOCK_MONOTONIC);
         uint64_t response = ended > release ? ended - release : 0;
         uint64_t jitter = began > release ? began - release : release - began;
@@ -72,38 +73,72 @@ static void *critical_worker(void *unused) {
         if (ended > release + DEADLINE_NS) st.critical_misses++;
         if (response / 1000 > st.critical_max_response_us) st.critical_max_response_us = response / 1000;
         if (jitter / 1000 > st.critical_max_jitter_us) st.critical_max_jitter_us = jitter / 1000;
-        pthread_mutex_unlock(&mu);
         release += PERIOD_NS;
-        if (release < ended) release = ended + PERIOD_NS; /* skips are not silently counted as successes */
+        if (release < ended) {
+            uint64_t skipped = (ended - release + PERIOD_NS - 1) / PERIOD_NS;
+            st.critical_jobs += skipped;
+            st.critical_misses += skipped;
+            release += skipped * PERIOD_NS;
+        }
+        pthread_mutex_unlock(&mu);
     }
     return NULL;
 }
+/* Called under mu at a worker boundary, after the previous chunk finished. */
+static int worker_cap(int id, uint64_t now) {
+    if (lease_until_ns && now >= lease_until_ns) {
+        /* The worker can withdraw a grant even if both services are stalled. */
+        nc2_cap = nc1_cap = 0;
+        lease_until_ns = 0;
+        stop_nc1_after_nc2 = 0;
+        level = st.level_requested = 2;
+        level_command_ns = now;
+        ack_ns[0] = ack_ns[1] = 0;
+    }
+    /* On a two-worker stop, NC2 gates first. If it stalls, NC1 still
+       closes after one worker period and the pair stays unconfirmed. */
+    if (stop_nc1_after_nc2 && (id == 1 || now - level_command_ns >= WORKER_NS)) {
+        nc1_cap = 0;
+        stop_nc1_after_nc2 = 0;
+    }
+    int cap = id == 0 ? nc1_cap : nc2_cap;
+    if (!(id == 0 && stop_nc1_after_nc2) && ack_ns[id] < level_command_ns) {
+        ack_ns[id] = now;
+        if (ack_ns[0] >= level_command_ns && ack_ns[1] >= level_command_ns) {
+            uint64_t latest = ack_ns[0] > ack_ns[1] ? ack_ns[0] : ack_ns[1];
+            st.last_actuation_us = (latest - level_command_ns) / 1000;
+            st.level_applied = level;
+            st.nc1_cap_pct = nc1_cap;
+            st.nc2_cap_pct = nc2_cap;
+            st.last_effective_ns = latest;
+            st.applied_epoch = cap_epoch;
+            st.applied_decision_id = lease_until_ns ? cap_id : 0;
+            if (level == 0 && recover_ns != 0) {
+                st.recovery_to_full_ms = (latest - recover_ns) / 1000000;
+                recover_ns = 0;
+            }
+        }
+    }
+    return cap;
+}
+
 static void *noncritical_worker(void *ptr) {
     int id = (int)(intptr_t)ptr;
     uint64_t next = now_ns(CLOCK_MONOTONIC);
     while (running) {
         pthread_mutex_lock(&mu);
-        int cap = id == 0 ? nc1_cap : nc2_cap;
+        uint64_t now = now_ns(CLOCK_MONOTONIC);
+        int cap = worker_cap(id, now);
+        uint64_t grant_end = lease_until_ns;
         int local_scenario = scenario;
-        if (ack_ns[id] < level_command_ns) {
-            ack_ns[id] = now_ns(CLOCK_MONOTONIC);
-            if (ack_ns[0] >= level_command_ns && ack_ns[1] >= level_command_ns) {
-                uint64_t latest = ack_ns[0] > ack_ns[1] ? ack_ns[0] : ack_ns[1];
-                st.last_actuation_us = (latest - level_command_ns) / 1000;
-                st.level_applied = level;
-                st.nc1_cap_pct = nc1_cap;
-                st.nc2_cap_pct = nc2_cap;
-                st.last_effective_ns = latest;
-                if (level == 0 && recover_ns != 0) {
-                    st.recovery_to_full_ms = (latest - recover_ns) / 1000000;
-                    recover_ns = 0;
-                }
-            }
-        }
         pthread_mutex_unlock(&mu);
         /* Approximate software duty-cycle: normal NC1 20%, NC2 15%; spike NC2 90%. */
         int percent = id == 0 ? 20 : (local_scenario == PG_SC_SPIKE ? 90 : 15);
-        if (cap > 0) burn_for((uint64_t)percent * (unsigned)cap * WORKER_NS / 10000);
+        if (cap > 0) {
+            uint64_t end = now_ns(CLOCK_MONOTONIC) + (uint64_t)percent * (unsigned)cap * WORKER_NS / 10000;
+            if (grant_end && end > grant_end) end = grant_end;
+            burn_until(end);
+        }
         next += WORKER_NS;
         uint64_t n = now_ns(CLOCK_MONOTONIC);
         if (next < n) next = n + 1000000ULL;
@@ -167,6 +202,41 @@ static void *csv_writer(void *ptr) {
     }
     return NULL;
 }
+/* Called under mu. Renewing a grant preserves its original effect timestamp. */
+static int apply_caps(const pg_cap_request_t *cmd, uint64_t now) {
+    int nc1 = cmd->request.arg, nc2 = cmd->request.extra;
+    if (nc1 < 0 || nc1 > 100 || nc2 < 0 || nc2 > 100) return EINVAL;
+    if (cmd->request.command == PG_CMD_LEASED_CAPS) {
+        if (!cmd->epoch || !cmd->decision_id || cmd->until_ns <= now ||
+            cmd->epoch < cap_epoch || (cmd->epoch == cap_epoch && cmd->decision_id < cap_id))
+            return ESTALE;
+        if (cmd->epoch == cap_epoch && cmd->decision_id == cap_id) {
+            int target1 = stop_nc1_after_nc2 ? 0 : nc1_cap;
+            if (lease_until_ns > now && nc1 == target1 && nc2 == nc2_cap) {
+                if (cmd->until_ns > lease_until_ns) lease_until_ns = cmd->until_ns;
+                return 0;
+            }
+            /* An expired generation may only re-establish closed gates. */
+            if (nc1 || nc2) return ESTALE;
+        }
+        cap_epoch = cmd->epoch;
+        cap_id = cmd->decision_id;
+        lease_until_ns = cmd->until_ns;
+    } else if (cap_epoch) {
+        return EBUSY;
+    }
+
+    if (!nc1_cap && !nc2_cap && (nc1 || nc2) && !recover_ns) recover_ns = now;
+    stop_nc1_after_nc2 = nc1_cap && nc2_cap && !nc1 && !nc2;
+    if (!stop_nc1_after_nc2) nc1_cap = nc1;
+    nc2_cap = nc2;
+    level = !nc1 ? 2 : !nc2 ? 1 : 0;
+    st.level_requested = level;
+    level_command_ns = now;
+    ack_ns[0] = ack_ns[1] = 0;
+    return 0;
+}
+
 static void serve(const char *csv_path) {
     name_attach_t *attach = name_attach(NULL, PG_BENCH_NAME, 0);
     if (!attach) { perror("name_attach"); exit(1); }
@@ -178,6 +248,7 @@ static void serve(const char *csv_path) {
     last_cpu_ns = now_ns(CLOCK_PROCESS_CPUTIME_ID);
     last_tick_ns = start_ns;
     st.supervisor_state = PG_ST_UNKNOWN;
+    st.level_requested = st.level_applied = level;
     st.nc1_cap_pct = nc1_cap;
     st.nc2_cap_pct = nc2_cap;
     pthread_t critical, nc1, nc2, sample, logger;
@@ -191,16 +262,19 @@ static void serve(const char *csv_path) {
     printf("pgbench PID %ld: QNX name=%s; CSV=%s (simulated temperature)\n", (long)getpid(), PG_BENCH_NAME, csv_path);
     fflush(stdout);
     while (running) {
-        union { pg_request_t req; struct _pulse pulse; } msg;
+        union { pg_request_t req; pg_cap_request_t caps; struct _pulse pulse; } msg;
         memset(&msg, 0, sizeof msg);
-        int rcvid = MsgReceive(attach->chid, &msg, sizeof msg, NULL);
+        struct _msg_info info;
+        int rcvid = MsgReceive(attach->chid, &msg, sizeof msg, &info);
         if (rcvid == -1) { if (errno == EINTR) continue; perror("MsgReceive"); break; }
         if (rcvid == 0) { if (msg.pulse.code == _PULSE_CODE_DISCONNECT) ConnectDetach(msg.pulse.scoid); continue; }
         if (msg.req.type == _IO_CONNECT) { MsgReply(rcvid, EOK, NULL, 0); continue; }
         pg_status_t result;
         int err = 0;
         pthread_mutex_lock(&mu);
-        if (msg.req.type != PG_BENCH_TYPE || msg.req.version != PG_BENCH_VERSION) err = EPROTO;
+        size_t expected = msg.req.command == PG_CMD_LEASED_CAPS ? sizeof(msg.caps) : sizeof(msg.req);
+        if (msg.req.type != PG_BENCH_TYPE || msg.req.version != PG_BENCH_VERSION ||
+            info.srcmsglen != (ssize_t)expected || info.msglen != (ssize_t)expected) err = EPROTO;
         else switch (msg.req.command) {
           case PG_CMD_STATUS: break;
           case PG_CMD_SCENARIO:
@@ -212,9 +286,11 @@ static void serve(const char *csv_path) {
             }
             break;
           case PG_CMD_LEVEL:
+            if (cap_epoch) { err = EBUSY; break; }
             if (msg.req.arg < 0 || msg.req.arg > 2) err = EINVAL;
             else {
                 int old = level;
+                stop_nc1_after_nc2 = 0;
                 level = msg.req.arg; st.level_requested = level;
                 nc1_cap = level < 2 ? 100 : 0;
                 nc2_cap = level < 1 ? 100 : 0;
@@ -223,18 +299,9 @@ static void serve(const char *csv_path) {
                 if (old == 2 && level < 2 && recover_ns == 0) recover_ns = level_command_ns;
             }
             break;
+          case PG_CMD_LEASED_CAPS:
           case PG_CMD_CAPS:
-            if (msg.req.arg < 0 || msg.req.arg > 100 || msg.req.extra < 0 || msg.req.extra > 100) err = EINVAL;
-            else {
-                int old_restricted = (nc1_cap == 0 && nc2_cap == 0);
-                nc1_cap = msg.req.arg; nc2_cap = msg.req.extra;
-                level = nc1_cap == 0 ? 2 : nc2_cap == 0 ? 1 : 0;
-                st.level_requested = level;
-                level_command_ns = now_ns(CLOCK_MONOTONIC);
-                ack_ns[0] = ack_ns[1] = 0;
-                if (old_restricted && (nc1_cap != 0 || nc2_cap != 0) && recover_ns == 0)
-                    recover_ns = level_command_ns;
-            }
+            err = apply_caps(&msg.caps, now_ns(CLOCK_MONOTONIC));
             break;
           case PG_CMD_STATE:
             if (msg.req.arg < PG_ST_UNKNOWN || msg.req.arg > PG_ST_RECOVERY ||
@@ -245,6 +312,8 @@ static void serve(const char *csv_path) {
           default: err = EINVAL; break;
         }
         result = st;
+        result.thermal_acquired_ns = last_sensor_ns;
+        result.cpu_window_end_ns = last_tick_ns;
         result.monotonic_ns = now_ns(CLOCK_MONOTONIC);
         result.sensor_age_ms = (uint32_t)((result.monotonic_ns - last_sensor_ns) / 1000000);
         result.error = err;
