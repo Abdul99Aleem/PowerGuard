@@ -83,9 +83,16 @@ real-temperature control loop or total-stack overhead.
 
 ## Remaining delivery checks
 
+Real-sensor follow-up on 21 November 2026: the new runtime sink passes physical
+input, managed CPU spike, producer pause and staged recovery on the Pi 4B.
+730 real readings and 2,135 complete critical jobs were captured, with zero
+misses/gaps. See the [live report](real-thermal-integration.md). Physical
+conversion freshness and threshold peak/cooldown remain separate open items.
+
 - [ ] Repeat the full ABC/BCA/CAB overhead series with corrected failure gates and archive every job trace.
 - [ ] Measure total split-stack monitoring/management overhead, including the enforcer and actual thermal adapter, against the 2% budget.
-- [ ] Integrate one real thermal producer and qualify physical conversion freshness, read age and frozen-conversion handling.
+- [x] Integrate one real thermal producer; verify read age, producer-stop fail-safe and staged recovery on Pi 4B.
+- [ ] Qualify physical conversion freshness and frozen-conversion handling beyond the endpoint's READ_ONLY format.
 - [ ] Capture physical thermal peak/cooldown and set acceptable overshoot bounds.
 - [ ] Repeat the matched-phase transition series and qualify the PRD jitter bound.
 - [ ] Repeat recovery interruption at 1.99 s and immediately after NC1 resumes.

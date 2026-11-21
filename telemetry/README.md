@@ -1,5 +1,13 @@
 # Pi 4 thermal characterization
 
+For the new single-source connection to the split runtime, use the
+[real thermal integration guide](../docs/real-thermal-integration.md).
+The `runtime` sink forces 25 ms pulse acquisition, disables this monitor's
+standalone heater, and forwards temperature to the runtime; the manager then
+combines it with measured CPU and complete critical-job reporting. The older
+`live` sink below submits directly to the supervisor and must not run alongside
+the normal sample-producing manager.
+
 Build the root project with the SDP 8 environment and `make BUILD_PROFILE=release`. Copy `build/aarch64le-release/pg-thermal` to the Pi. The default sink is a local receiver in the monitor process. The optional `live` sink needs the PowerGuard service built from this branch.
 
 ## Qualify the image

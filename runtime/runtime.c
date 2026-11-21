@@ -10,6 +10,7 @@
 #include "protocol.h"
 #include "ipc.h"
 #include "pg_progress.h"
+#include "pg_thermal_bridge.h"
 #include <devctl.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -56,6 +57,7 @@ static uint64_t dropped[3];
 static clockid_t idle_clocks[4];
 static int fault_latched;
 static pid_t enforcer_pid;
+static pid_t thermal_pid;
 static pg_progress *progress;
 
 static void observe_force_off(uint64_t n)
@@ -216,7 +218,7 @@ static void tick(uint64_t n)
     time_history[slot] = n;
     last_cpu = n;
     status.cpu_window_end_ns = status.cpu_valid ? n : 0;
-    if (n - last_sample >= UINT64_C(25000000)) {
+    if (!(status.features & PG_FEATURE_REAL_THERMAL) && n - last_sample >= UINT64_C(25000000)) {
         uint64_t elapsed = n - scenario_at;
         if (status.scenario != PG_SC_FREEZE || elapsed < UINT64_C(4000000000)) {
             int temp = 45000;
@@ -430,9 +432,19 @@ static int serve(const char *executable, char **idle_args, unsigned iterations)
     signal(SIGINT, stop);
     signal(SIGTERM, stop);
     status.features = PG_FEATURE_THREADCTL | PG_FEATURE_ENFORCER;
+    const char *thermal_mode = getenv("PG_REAL_THERMAL");
+    if (thermal_mode && strcmp(thermal_mode, "1")) {
+        fputs("PG_REAL_THERMAL must be 1 or unset\n", stderr);
+        name_detach(attach, 0);
+        pg_progress_close(progress, 1);
+        return 1;
+    }
+    if (thermal_mode) {
+        status.features |= PG_FEATURE_REAL_THERMAL | PG_FEATURE_THERMAL_ERROR;
+    }
     scenario_at = now();
-    status.temperature_milli_c = 45000;
-    status.thermal_acquired_ns = scenario_at;
+    status.temperature_milli_c = thermal_mode ? 0 : 45000;
+    status.thermal_acquired_ns = thermal_mode ? 0 : scenario_at;
     status.level_requested = status.level_applied = 2;
     for (unsigned r = 0; r < 3; ++r) {
         char role[8];
@@ -456,6 +468,7 @@ static int serve(const char *executable, char **idle_args, unsigned iterations)
             pg_worker_message worker;
             pg_jobs_request jobs;
             pg_enforcer_request enforcer;
+            pg_thermal_request thermal;
         } in = {0};
         struct _msg_info info;
         int rcvid = MsgReceive(attach->chid, &in, sizeof(in), &info);
@@ -502,10 +515,11 @@ static int serve(const char *executable, char **idle_args, unsigned iterations)
             }
             continue;
         }
-        size_t expected = in.request.command == PG_CMD_LEASED_CAPS ? sizeof(in.caps)
-                          : in.request.command == PG_CMD_ENFORCER  ? sizeof(in.enforcer)
-                          : in.request.command == PG_CMD_JOBS      ? sizeof(in.jobs)
-                                                                   : sizeof(in.request);
+        size_t expected = in.request.command == PG_CMD_LEASED_CAPS      ? sizeof(in.caps)
+                          : in.request.command == PG_CMD_THERMAL_SAMPLE ? sizeof(in.thermal)
+                          : in.request.command == PG_CMD_ENFORCER       ? sizeof(in.enforcer)
+                          : in.request.command == PG_CMD_JOBS           ? sizeof(in.jobs)
+                                                                        : sizeof(in.request);
         if (info.srcmsglen != (ssize_t)expected || info.msglen != (ssize_t)expected ||
             in.request.type != PG_BENCH_TYPE || in.request.version != PG_BENCH_VERSION) {
             MsgError(rcvid, EPROTO);
@@ -533,6 +547,16 @@ static int serve(const char *executable, char **idle_args, unsigned iterations)
             continue;
         }
         switch (in.request.command) {
+            case PG_CMD_THERMAL_SAMPLE:
+                if (thermal_pid && thermal_pid != info.pid && kill(thermal_pid, 0) == 0) {
+                    e = EBUSY;
+                } else {
+                    e = pg_thermal_accept(&status, &in.thermal, n);
+                    if (!e) {
+                        thermal_pid = info.pid;
+                    }
+                }
+                break;
             case PG_CMD_STATUS:
                 break;
             case PG_CMD_WATCHDOG:
@@ -558,7 +582,10 @@ static int serve(const char *executable, char **idle_args, unsigned iterations)
                 e = info.pid != enforcer_pid ? EPERM : caps(&in.caps, n);
                 break;
             case PG_CMD_SCENARIO:
-                if (in.request.arg < PG_SC_NORMAL || in.request.arg > PG_SC_FREEZE) {
+                if ((status.features & PG_FEATURE_REAL_THERMAL) &&
+                    (in.request.arg == PG_SC_RAMP || in.request.arg == PG_SC_FREEZE)) {
+                    e = ENOTSUP;
+                } else if (in.request.arg < PG_SC_NORMAL || in.request.arg > PG_SC_FREEZE) {
                     e = EINVAL;
                 } else {
                     status.scenario = in.request.arg;
@@ -686,7 +713,7 @@ static int client(const char *command)
         signal(SIGINT, stop);
         signal(SIGTERM, stop);
         puts(
-            "monotonic_ns,scenario,temp_sim_milli_c,sensor_age_ms,cpu0,cpu1,cpu2,cpu3,state,nc1,nc2,effect1_ns,effect2_ns,ready,watchdog,cpu_valid,misses");
+            "monotonic_ns,scenario,temperature_milli_c,sensor_age_ms,cpu0,cpu1,cpu2,cpu3,state,nc1,nc2,effect1_ns,effect2_ns,ready,watchdog,cpu_valid,misses");
         while (running) {
             if (!send_timed(coid, &request, sizeof(request), &s, sizeof(s)) || s.error) {
                 return 1;
@@ -710,8 +737,9 @@ static int client(const char *command)
             return 1;
         }
         printf(
-            "ready=0x%x watchdog=%u enforcer=%u cpu_valid=%u source=SIMULATED-temperature REAL-per-core-CPU state=%d\n",
-            s.ready_mask, s.watchdog_ok, s.enforcer_ok, s.cpu_valid, s.supervisor_state);
+            "ready=0x%x watchdog=%u enforcer=%u cpu_valid=%u source=%s-temperature REAL-per-core-CPU state=%d\n",
+            s.ready_mask, s.watchdog_ok, s.enforcer_ok, s.cpu_valid,
+            s.features & PG_FEATURE_REAL_THERMAL ? "REAL" : "SIMULATED", s.supervisor_state);
         for (unsigned r = 0; r < 5; ++r) {
             pg_thread_print(&s.placement[r]);
         }

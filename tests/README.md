@@ -12,6 +12,12 @@ tests. Outputs are ignored under `build/host-checks/`. Set `CC` or `PYTHON` to
 an alternate compiler/interpreter executable when needed. These checks do not
 qualify QNX scheduling or physical hardware.
 
+`thermal_checks.c` exercises the real thermal bridge's replay, future timestamp,
+quality and range rejection; source isolation; stale-input closure; and fresh
+data recovery through the actual policy. For board acceptance, deploy and run
+`scripts/validate-real-thermal.sh` as described in the
+[real thermal guide](../docs/real-thermal-integration.md).
+
 For the separate-process ThreadCtl runtime and the manager-stall fix, see the
 [complete architecture and problem-resolution guide](../docs/powerguard-design-and-manager-stall-fix.md)
 and [Pi validation report](../docs/manager-stall-fix-validation.md).

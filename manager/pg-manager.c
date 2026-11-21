@@ -173,8 +173,10 @@ int main(void)
             split_runtime && (bench.ready_mask != 7 || !bench.watchdog_ok || !bench.cpu_valid ||
                               ((bench.features & PG_FEATURE_ENFORCER) && !bench.enforcer_ok))
                 ? SENSOR_ERROR
+            : (bench.features & PG_FEATURE_REAL_THERMAL)
+                ? ((bench.features & PG_FEATURE_THERMAL_ERROR) ? SENSOR_ERROR : READ_ONLY)
                 : GOOD;
-        sample.source = SIMULATED;
+        sample.source = (bench.features & PG_FEATURE_REAL_THERMAL) ? REAL : SIMULATED;
         for (unsigned i = 0; i < 4; ++i) {
             sample.core_busy_pct[i] = split_runtime ? bench.core_busy_pct[i] : cpu;
         }

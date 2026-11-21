@@ -1,5 +1,20 @@
 # Evidence and final audit
 
+## Real sensor follow-up
+
+The [real thermal evidence bundle](real-thermal-pi4-evidence.zip) and
+[summary](real-thermal-pi4-summary.json) record the new verified integration:
+730 actual sensor readings, real managed CPU load, producer-stop fail-safe,
+staged recovery, and 2,135 complete critical jobs with zero misses. Read the
+[live report](../real-thermal-integration.md) for scope, the retained initial
+capture-shutdown failure, and the subsequent passing full run.
+
+Extract this bundle and run `tests/analyze_threadctl.py` on `final/jobs.csv`;
+the expected maximum response is 986,500 ns. The bundle also includes a short
+default-mode compatibility regression under `simulated-regression/`, both its
+pre/post-watchdog scorecards, native check output and release binary hashes.
+The older evidence below retains its original, separately measured scope.
+
 ## Inspect the integrated Pi run
 
 **[Download pi4-integrated-evidence.zip](pi4-integrated-evidence.zip)** (about

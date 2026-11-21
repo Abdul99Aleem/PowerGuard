@@ -22,6 +22,7 @@ with its independent enforcer; older bench results have a different scope.
 | [ThreadCtl integration](threadctl-integration.md) | QNX APIs, CPU/priority placement, build, launch and regression commands |
 | [Manager-stall validation](manager-stall-fix-validation.md) | Earlier fault campaign and immutable receipt method |
 | [Thermal reader](../telemetry/README.md) | Sensor format, conversion-freshness limits, acquisition and hardware characterization |
+| [Real thermal integration](real-thermal-integration.md) | Single real sensor source, managed CPU load, producer freeze and target acceptance |
 | [Tests](../tests/README.md) | Portable regressions and target checks |
 | [Scripts](../scripts/README.md) | Current demo versus historical remote-console helpers |
 

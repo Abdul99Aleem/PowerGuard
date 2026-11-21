@@ -14,6 +14,11 @@ observation and **NC1-before-NC2** restoration.
 
 **[Jury demo →](docs/jury-runbook.md)** · **[Requirements and answers →](docs/jury-checklist.md)** · **[Architecture and source →](docs/source-guide.md)** · **[Evidence →](docs/teammate3-merge-validation.md)** · **[Documentation →](docs/README.md)**
 
+**Real sensor integration now Pi-tested:** 730 physical `/dev/thermal` readings
+at 25 ms pulse releases; managed CPU restriction, stale-producer fail-safe and
+staged recovery passed. **2,135 critical jobs, zero misses; 0.9865 ms maximum
+response.** [Live demo, results and raw evidence →](docs/real-thermal-integration.md)
+
 ## Results at a glance
 
 Recorded on **Raspberry Pi 4B · QNX 8.0.0 · aarch64le release**. These are
@@ -160,6 +165,11 @@ These exercise policy, metrics, manager expiry, watchdog latching and
 evidence-analysis rejection cases. They do not establish QNX scheduling or
 hardware timing. See [tests](tests/README.md) for target validation.
 
+For the verified real-temperature integration, see the [live thermal guide](docs/real-thermal-integration.md).
+It connects the pulse reader to the managed runtime without mixing simulated
+temperature into the policy stream. Run `validate-real-thermal.sh` from the
+deployed release bundle to repeat its live acceptance sequence.
+
 ## Repository map
 
 ```text
@@ -188,9 +198,10 @@ See the [scripts guide](scripts/README.md) before using historical remote menus.
 
 ## Demonstration scope and remaining qualification
 
-The integrated demo uses **simulated temperature**, **real measured per-core
-CPU**, and a **demand index**. The real thermal adapter and five-LED GPIO
-observer are implemented, but integrated real-temperature control and physical
+The original jury menu uses **simulated temperature**, **real measured per-core
+CPU**, and a **demand index**. The separate [real-sensor demo](docs/real-thermal-integration.md)
+now verifies the integrated physical input path, CPU restriction, producer
+freshness and recovery. Physical thermal-threshold peak/cooldown and physical
 LED/wiring validation remain open. The required LED feature must therefore
 not be described as hardware-verified. Pi 5/BSP qualification, larger matched
 jitter trials, total split-stack overhead and long-duration interference tests

@@ -9,6 +9,7 @@
 
 #include "ipc.h"
 #include "pg_threadctl.h"
+#include "pgbench_protocol.h"
 #include <sys/neutrino.h>
 #include <sys/dispatch.h>
 #include <sys/trace.h>
@@ -59,10 +60,18 @@ static sem_t heat_start;
 static int inbox;
 static int notify;
 static int server = -1;
+static int runtime_sink;
 static int traced;
 static atomic_uint overflow;
 static uint64_t receiver_cpu;
 static unsigned messages;
+static volatile sig_atomic_t interrupted;
+
+static void interrupt_run(int sig)
+{
+    (void)sig;
+    interrupted = 1;
+}
 
 static uint64_t ns(clockid_t id)
 {
@@ -184,7 +193,25 @@ static void *receiver(void *unused)
         unsigned end = p.code == DONE ? published : (unsigned)p.value.sival_int;
         unsigned start = atomic_load(&tail);
         uint64_t received = ns(CLOCK_MONOTONIC);
-        if (server >= 0 && start != end) {
+        if (runtime_sink && start != end) {
+            for (unsigned i = start; i != end; ++i) {
+                const pg_sample *sample = &rows[slots[i % RING]].s;
+                pg_thermal_request q = {
+                    .request = {PG_BENCH_TYPE, PG_BENCH_VERSION, PG_CMD_THERMAL_SAMPLE, 0, 0},
+                    .acquired_ns = sample->acquired_ns,
+                    .temperature_deci_c = sample->temp_deci_c,
+                    .quality = sample->quality};
+                pg_status_t reply;
+                uint64_t timeout = PG_RESPONSE_TARGET;
+                if (TimerTimeout(CLOCK_MONOTONIC, _NTO_TIMEOUT_SEND | _NTO_TIMEOUT_REPLY, NULL,
+                                 &timeout, NULL) < 0 ||
+                    MsgSend(server, &q, sizeof(q), &reply, sizeof(reply)) < 0 || reply.error) {
+                    die("deliver real thermal sample to runtime");
+                }
+                ++messages;
+            }
+            received = ns(CLOCK_MONOTONIC);
+        } else if (server >= 0 && start != end) {
             pg_sample_batch batch = {
                 .type = PG_SAMPLE_BATCH, .version = PG_VERSION, .count = end - start};
             for (unsigned i = start; i != end; ++i) {
@@ -203,7 +230,7 @@ static void *receiver(void *unused)
         }
         atomic_store(&tail, end);
         if (p.code == DONE) {
-            if (overflow && server >= 0) {
+            if (overflow && server >= 0 && !runtime_sink) {
                 pg_sample_batch fault = {
                     .type = PG_SAMPLE_BATCH, .version = PG_VERSION, .count = 1};
                 fault.samples[0].quality = SENSOR_ERROR;
@@ -284,7 +311,7 @@ int main(int argc, char **argv)
 {
     if (argc < 9 || argc > 13) {
         fputs(
-            "pg-thermal busy|wait|pulse|change C|mC seconds stop_C idle_tid0 idle_tid1 idle_tid2 idle_tid3 [trace] [live] [quiet] [40hz]\n",
+            "pg-thermal busy|wait|pulse|change C|mC seconds stop_C idle_tid0 idle_tid1 idle_tid2 idle_tid3 [trace] [live|runtime] [quiet] [40hz]\n",
             stderr);
         return 2;
     }
@@ -332,13 +359,37 @@ int main(int argc, char **argv)
         } else if (!strcmp(argv[i], "40hz")) {
             period = 25 * PG_MS;
         } else if (!strcmp(argv[i], "live")) {
+            if (server >= 0) {
+                return 2;
+            }
             server = name_open(PG_NAME, 0);
             if (server < 0) {
                 die("name_open");
             }
+        } else if (!strcmp(argv[i], "runtime")) {
+            if (server >= 0) {
+                return 2;
+            }
+            runtime_sink = 1;
+            server = name_open(PG_BENCH_NAME, 0);
+            if (server < 0) {
+                die("name_open runtime");
+            }
         } else {
             return 2;
         }
+    }
+    if (runtime_sink) {
+        /* Use managed NC workers as the heater; never add an uncontrolled load. */
+        if (busy_wait || wait) {
+            fputs("runtime sink requires pulse or change mode\n", stderr);
+            return 2;
+        }
+        quiet = 1;
+        period = 25 * PG_MS;
+        change = 0;
+        signal(SIGINT, interrupt_run);
+        signal(SIGTERM, interrupt_run);
     }
     unsigned count = (unsigned)(seconds * UINT64_C(1000000000) / period);
     int pulse_timer = !wait && !busy_wait;
@@ -427,7 +478,7 @@ int main(int argc, char **argv)
     uint64_t seq = prev_end;
     uint64_t begin_cpu = ns(CLOCK_THREAD_CPUTIME_ID);
     int32_t last_temp = 0;
-    while (due < end) {
+    while (due < end && !interrupted) {
         if (busy_wait) {
             while (ns(CLOCK_MONOTONIC) < due) {
             }
@@ -622,12 +673,15 @@ int main(int argc, char **argv)
         sum,
         "metric,value\nsource,HARDWARE\nmode,%s\nunits,%s\nsink,%s\nplanned,%u\ncollected,%u\nmissing,%u\noverflow,%u\nread_errors,%u\nheat_cutoff_latched,%d\ntimer_pulses,%u\ndata_pulses,%u\npolicy_messages,%u\nsampler_cpu_ns,%" PRIu64
         "\nreceiver_cpu_ns,%" PRIu64 "\nclock_resolution_ns,%ld\nclock_pair_min_ns,%" PRIu64 "\n",
-        argv[1], argv[2], server >= 0 ? "supervisor" : "benchmark", count, n, count - n, lost,
-        errors, heat_blocked, wakes, signals, messages, cpu, receiver_cpu, resolution.tv_nsec,
-        overhead);
+        argv[1], argv[2],
+        runtime_sink  ? "runtime"
+        : server >= 0 ? "supervisor"
+                      : "benchmark",
+        count, n, count - n, lost, errors, heat_blocked, wakes, signals, messages, cpu,
+        receiver_cpu, resolution.tv_nsec, overhead);
     fprintf(sum,
-            "period_ns,%" PRIu64 "\nduration_s,%d\nquiet,%d\nstop_C,%d\ninvalid_cpu_windows,%u\n",
-            period, seconds, quiet, cutoff / 10, bad_cpu);
+            "period_ns,%" PRIu64 "\nduration_s,%d\nquiet,%d\nstop_C,%d\ninvalid_cpu_windows,%u\ninterrupted,%d\n",
+            period, seconds, quiet, cutoff / 10, bad_cpu, (int)interrupted);
     for (int k = 0; k < 6; ++k) {
         unsigned used = 0;
         for (unsigned i = 0; i < n; ++i) {
@@ -658,5 +712,7 @@ int main(int argc, char **argv)
     if (fclose(sum)) {
         failed = 1;
     }
-    return failed || lost || bad_cpu || errors || n != count;
+    /* A requested runtime shutdown is a partial capture, recorded above.
+       Read errors, overflow and invalid CPU windows still fail the capture. */
+    return failed || lost || bad_cpu || errors || (!interrupted && n != count);
 }

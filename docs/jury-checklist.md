@@ -26,7 +26,7 @@ not a new test performed by opening this document.
 | Sudden noncritical CPU spike | Real synthetic NC2 computation with measured per-core utilization | Demo **2**; utilization uses a 100 ms sliding window refreshed every 10 ms |
 | Stale or frozen temperature input | Freeze stops acquisition progress; replay cannot renew sample identity or timestamp | Demo **4**; after freshness expiry expect conservative Critical |
 | Progressive controlled restoration | From Critical: NC1 after 2 s clear, NC2 after another 1 s; from Throttled: NC2 after 3 s | Demo **5**; unsafe input or an acquisition gap over 35 ms interrupts observation |
-| Temperature Monitor | Demo temperature producer is simulated; standalone real adapter exists | `telemetry/thermal.c`; [real adapter procedure](../telemetry/README.md) |
+| Temperature Monitor | Original menu uses simulated temperature; separate real-input acceptance is now Pi-tested | [Real thermal results and reproduction](real-thermal-integration.md); `telemetry/thermal.c` |
 | Supervisor, Workload Manager and watchdog | Separate supervisor, manager, runtime watchdog and independent enforcer | [Architecture](../README.md#how-qnx-makes-the-design-work), [process placement](threadctl-integration.md#process-placement) |
 | Mandatory CLI fields | Temperature/source, age, CPU, applied/requested workload caps, state, restriction cause, critical latency, misses, job gaps and recovery clear time | Demo **1**; `scripts/jury-demo.sh` `show_status`; `pg-runtime status` and `pg-console --live scores` |
 | Five physical state LEDs | GPIO observer implemented; physical validation **pending** | `gpio/pg-state-leds.c`; LED procedure below |
@@ -72,7 +72,7 @@ Show demo **7 before 8**, and retain both results.
 | Item | Submission scope |
 | --- | --- |
 | CPU workload and utilization | Real computation and measured per-core idle-time accounting on the Pi |
-| Temperature in jury scenarios | Explicitly SIMULATED; physical thermal-control integration remains pending |
+| Temperature in original jury scenarios | Explicitly SIMULATED; separate [real-input test](real-thermal-integration.md) passes with 730 physical readings; physical thermal threshold crossing is still unqualified |
 | Power | Integer demand index `(2 × NC1 request + 3 × NC2 request) / 5`, or explicit 0–100 index; no watt measurement |
 | Critical control | Synthetic periodic work, not a deployed physical control algorithm |
 | Restriction effect | Worker acknowledgements and immutable supervisor receipt, not just a command being sent |

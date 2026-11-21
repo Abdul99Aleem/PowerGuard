@@ -1,5 +1,16 @@
 # PowerGuard source guide
 
+The [real thermal integration](real-thermal-integration.md) adds
+`PG_CMD_THERMAL_SAMPLE` and REAL/error feature bits without changing the existing
+protocol-v4 status layout. `pg_thermal_accept` in
+[`include/pg_thermal_bridge.h`](../include/pg_thermal_bridge.h) validates acquisition
+identity, timestamps, quality and range. The runtime owns one real producer;
+the manager merges that input with measured CPU and continues job/progress
+delivery. `pg-thermal`'s `runtime` sink uses 25 ms pulses and graceful partial
+capture. [`tests/thermal_checks.c`](../tests/thermal_checks.c) verifies the bridge
+and actual-policy stale closure/restoration. The default simulated path remains
+available for the original reproducible scenarios.
+
 Team Schedulix · QNX eHACK submission
 
 PowerGuard runs one periodic critical workload and two budgeted noncritical workloads on a four-core QNX target. To follow a restriction from input to evidence, start with `pg_ingest` in the policy, then read `main` in the enforcer, `ordered_cap` in the runtime and `pg_effect` back in the policy. A decision, a worker applying it, and the supervisor receiving confirmation each have a separate timestamp.

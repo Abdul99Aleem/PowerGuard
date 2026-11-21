@@ -29,7 +29,8 @@ enum pg_command {
     PG_CMD_LEASED_CAPS,
     PG_CMD_JOBS,
     PG_CMD_WATCHDOG,
-    PG_CMD_ENFORCER
+    PG_CMD_ENFORCER,
+    PG_CMD_THERMAL_SAMPLE
 };
 
 enum pg_scenario { PG_SC_NORMAL = 0, PG_SC_RAMP = 1, PG_SC_SPIKE = 2, PG_SC_FREEZE = 3 };
@@ -106,6 +107,16 @@ typedef struct {
 
 #define PG_FEATURE_THREADCTL 1u
 #define PG_FEATURE_ENFORCER 2u
+#define PG_FEATURE_REAL_THERMAL 4u
+#define PG_FEATURE_THERMAL_ERROR 8u
+
+/* Additive protocol-v4 request; existing status layout is unchanged. */
+typedef struct {
+    pg_request_t request;
+    uint64_t acquired_ns;
+    int32_t temperature_deci_c;
+    int32_t quality;
+} pg_thermal_request;
 
 typedef struct {
     pg_request_t request;

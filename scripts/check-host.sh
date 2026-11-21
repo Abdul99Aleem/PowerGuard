@@ -19,4 +19,7 @@ mkdir -p "$out"
     supervisor/policy.c supervisor/metrics.c tests/merge_checks.c \
     -o "$out/pg-merge-check"
 "$out/pg-merge-check"
+"$compiler" -std=c11 -Wall -Wextra -Werror -Iinclude -Itestbench \
+    supervisor/policy.c tests/thermal_checks.c -o "$out/pg-thermal-check"
+"$out/pg-thermal-check"
 "$python" -m unittest discover -s tests -p 'test_*.py' -v

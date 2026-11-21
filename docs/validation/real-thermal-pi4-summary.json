@@ -1,0 +1,147 @@
+{
+  "date": "2026-11-21",
+  "target": {
+    "board": "Raspberry Pi 4B",
+    "qnx": "8.0.0",
+    "architecture": "aarch64le",
+    "directory": "/tmp/pg-real-thermal-1795224989",
+    "instance": "real_thermal_52252721",
+    "idle_tids": [
+      1,
+      2,
+      3,
+      4
+    ]
+  },
+  "build": "release -O2 -Wall -Wextra -Werror",
+  "command": "sh validate-real-thermal.sh C 1 2 3 4",
+  "target_acceptance_pass": true,
+  "raw_jobs": {
+    "source": "final/jobs.csv",
+    "first_id": 1,
+    "last_id": 2135,
+    "jobs": 2135,
+    "gaps": [],
+    "invalid_timestamps": [],
+    "period_errors": 0,
+    "deadline_misses": 0,
+    "missed_ids": [],
+    "response": {
+      "n": 2135,
+      "p50_ns": 492722,
+      "p95_ns": 622111,
+      "p99_ns": 626241,
+      "max_ns": 986500
+    },
+    "release_lateness": {
+      "n": 2135,
+      "p50_ns": 20648,
+      "p95_ns": 23574,
+      "p99_ns": 39667,
+      "max_ns": 427611
+    },
+    "execution_wall_time": {
+      "n": 2135,
+      "p50_ns": 466741,
+      "p95_ns": 600166,
+      "p99_ns": 600260,
+      "max_ns": 600630
+    },
+    "pass": true
+  },
+  "temperature": {
+    "source": "REAL",
+    "quality": "READ_ONLY",
+    "readings": 730,
+    "minimum_c": 52.1,
+    "maximum_c": 55.5,
+    "period_ns": 25000000,
+    "read_errors": 0,
+    "overflow": 0,
+    "invalid_cpu_windows": 0,
+    "physical_thermal_threshold_crossed": false
+  },
+  "scorecard": "QNX supervisor scorecard\n1. Restriction within 20.0 ms: PASS  confirmed=2 late=0 unconfirmed=0 pending=0 worst=8.977 ms\n2. Critical deadline misses: 0/2130 reported jobs, missing records=0, max completed latency=0.987 ms, latest latency=0.643 ms\n3. Worst observed overshoot in 100 ms windows: CPU=1 percentage points power=2 index points\n4. Transition jitter, case 1 Normal to Warning: need two matching trials (n=0)\n5. Controlled restoration: last=3049.986 ms worst=3049.986 ms n=2\n",
+  "capture_note": "120 s allocation deliberately stopped after acceptance; interrupted=1; missing includes unrun allocation and deliberate producer pause. Raw recorder has 2135 jobs; earlier scorecard has 2130.",
+  "retained_initial_failure": "Initial live behavior and timing passed, but monitor exit failed intentional partial capture as incomplete. Runtime graceful-stop semantics corrected without relaxing errors or thresholds; complete acceptance rerun passed.",
+  "remaining": [
+    "physical conversion counter/frozen-conversion qualification",
+    "physical thermal threshold overshoot and cooldown",
+    "larger jitter trial series",
+    "physical LEDs",
+    "long soak and total monitoring overhead"
+  ],
+  "source_sha256": {
+    "runtime/runtime.c": "968b2b86cd4934f2ea492e58599630a5c5baad381e94d406f12ddd636971a268",
+    "manager/pg-manager.c": "6c2737da26721ba651309a051a59fdbb07d25dda2a4448261b0a8c815fa33b98",
+    "telemetry/thermal.c": "ef017a73905cea9641f2c481f5a25a78eb8b28a1252ad7ea698ca5d40d036566",
+    "testbench/pgbench_protocol.h": "1a15ba2ef98cde71a89c929939254085e9c63dd3b0c6c94653ff8765e0449d9b",
+    "include/pg_thermal_bridge.h": "d1ad7994b83dd8e9954c4f8259aaff9f39cadbb75d2791f9b7f194174b25dfde",
+    "tests/thermal_checks.c": "566d3445f8a4aba42f59535ab7e0d30fe40f92b01c051b19cde5ea4134776490",
+    "scripts/validate-real-thermal.sh": "3a053bc39b96e1cb39f7d95e5bf8a8c297e3a2fdcfa67cdde9eae5cae992724b"
+  },
+  "release_sha256": {
+    "PowerGuard": "2e5692d15c989bd8e119e67bc7022cb1af88efa0a26af05b542e18c421ed958a",
+    "pg-runtime": "dafea65c7d3fde32a67112a23f82e3a969fa55a79d517a6943be8f3be7a807f8",
+    "pg-manager": "2add450ec41c7945ec19ede8937c52592fc1db4356dbab758f801425949970a1",
+    "pg-enforcer": "0405f0b5e3a6a1fb804e6a7e5c7768f0c377a17fd50a1cf625351346e0b1ddc9",
+    "pg-thermal": "ced73734f23bc89bb04a7ecf7ad5e2feba674acbef0b47a7b1d5a22b7e503733",
+    "pg-console": "29af8630f300735ece38904b632ae3f099a3bc19c0a3f938f9efa11824a63299",
+    "pg-validate": "b0885cc1cce3038acf4c500058db829b2cab505e8f7ac07ebddd85fa8c19297e",
+    "pg-thermal-check": "35fc30eb1003f2f516b67d9654b84f6662051e10a11497d7c73a5b48d4c1d31f"
+  },
+  "simulated_regression": {
+    "target_acceptance_pass": true,
+    "command": "PG_TRIALS=1 PG_STALL_TRIALS=3 PG_RESTART_TRIALS=2 sh validate-threadctl.sh 1 2 3 4",
+    "jobs": {
+      "source": "simulated-regression/jobs.csv",
+      "first_id": 1,
+      "last_id": 7853,
+      "jobs": 7853,
+      "gaps": [],
+      "invalid_timestamps": [],
+      "period_errors": 0,
+      "deadline_misses": 0,
+      "missed_ids": [],
+      "response": {
+        "n": 7853,
+        "p50_ns": 634889,
+        "p95_ns": 687223,
+        "p99_ns": 689315,
+        "max_ns": 1125704
+      },
+      "release_lateness": {
+        "n": 7853,
+        "p50_ns": 20093,
+        "p95_ns": 23167,
+        "p99_ns": 29593,
+        "max_ns": 649445
+      },
+      "execution_wall_time": {
+        "n": 7853,
+        "p50_ns": 607315,
+        "p95_ns": 666740,
+        "p99_ns": 666741,
+        "max_ns": 672963
+      },
+      "pass": true
+    },
+    "manager_stalls": {
+      "source": "simulated-regression/stall-confirmations.txt",
+      "trials": 3,
+      "minimum_required": 3,
+      "manager_deadline_ns": 50000000,
+      "confirmation_limit_ns": 20000000,
+      "worst_confirmation_ns": 12137723,
+      "min_confirmation_ns": 9400778,
+      "worst_effect_ns": 10554778,
+      "worst_pause_to_confirmation_ns": 57354111,
+      "unique_decisions": 3,
+      "errors": [],
+      "pass": true
+    },
+    "supervisor_latch": "PASS supervisor_stop_ns=41884052617907 last_progress_ns=41884052612019 forced_ns=41884272490204 both_off_ns=41884105057222 observed_ns=41884274035111 observed_from_progress_ns=221423092 latched_after_resume=1\n",
+    "scorecard": "QNX supervisor scorecard\n1. Restriction within 20.0 ms: PASS  confirmed=8 late=0 unconfirmed=0 pending=0 worst=10.555 ms\n2. Critical deadline misses: 0/7650 reported jobs, missing records=0, max completed latency=1.126 ms, latest latency=0.701 ms\n3. Worst observed overshoot in 100 ms windows: thermal=0.0 C CPU=0 percentage points power=2 index points\n4. Transition jitter, case 1 Normal to Warning: need two matching trials (n=1)\n5. Controlled restoration: last=3036.168 ms worst=3055.307 ms n=7\n",
+    "post_fault_scorecard": "QNX supervisor scorecard\n1. Restriction within 20.0 ms: FAIL  confirmed=9 late=1 unconfirmed=0 pending=0 worst=957.378 ms\n2. Critical deadline misses: 0/7854 reported jobs, missing records=0, max completed latency=1.126 ms, latest latency=0.620 ms\n3. Worst observed overshoot in 100 ms windows: thermal=0.0 C CPU=0 percentage points power=2 index points\n4. Transition jitter, case 1 Normal to Warning: need two matching trials (n=1)\n5. Controlled restoration: last=3036.168 ms worst=3055.307 ms n=7\n"
+  }
+}

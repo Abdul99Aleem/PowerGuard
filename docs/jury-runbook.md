@@ -1,5 +1,9 @@
 # PowerGuard jury demo runbook
 
+For the newly verified **real `/dev/thermal` path**, use the
+[real-sensor acceptance demo](real-thermal-integration.md). The menu below
+retains explicit simulated thermal ramp/freeze scenarios; its CPU load is real.
+
 One Pi, one terminal, one menu. The final submission uses the validated
 ThreadCtl runtime and independent enforcer. This presentation wrapper does not
 change the policy, thresholds or workload code.
