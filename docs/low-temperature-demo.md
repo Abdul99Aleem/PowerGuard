@@ -38,6 +38,11 @@ bench demonstration, not a production thermal-limit or jitter qualification.
 **[Raw evidence](validation/low-temperature-evidence.zip)** ·
 **[Summary and binary hashes](validation/low-temperature-summary.json)**
 
+The later full-kernel-trace run completed the same state flow with zero critical
+misses, and exposed one 20.646278 ms restriction. It is tracked separately as
+[PG-PERF-01](timing-investigation.md), including raw evidence and the plan to
+increase timing margin. The passing figures above describe the trace-off run.
+
 The prepared executable bundle is at **`/tmp/pg-low-thermal-1795226936`** on the
 Pi. Exit any old demo before starting this one, then run:
 

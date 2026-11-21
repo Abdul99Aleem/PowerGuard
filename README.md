@@ -26,16 +26,25 @@ restrictions and staged recovery with **4,118 critical jobs and zero misses**.
 
 ## Results at a glance
 
-Recorded on **Raspberry Pi 4B · QNX 8.0.0 · aarch64le release**. These are
-archived measurements; this final documentation audit does not claim a new Pi run.
+Recorded on **Raspberry Pi 4B · QNX 8.0.0 · aarch64le release**. Each result
+below identifies its measured scenario; the linked captures retain exact counts,
+profiles and timestamp definitions.
 
 | Jury metric | Recorded result | Scope |
 | --- | --- | --- |
 | Limit detection → effective restriction | **13.820500 ms** worst effect; **14.798204 ms** worst supervisor receipt | 36 pre-watchdog restrictions; zero late or unconfirmed, against a 20 ms target |
 | Critical-task deadline misses | **0 / 21,601** captured jobs; **1.148518 ms** maximum response | 10 ms period, 5 ms deadline; zero missing job records |
-| Thermal / workload overshoot | **0.0 °C / 6 CPU percentage points / 2 demand-index points** | Observed 100 ms windows; temperature is simulated |
-| State-transition jitter | **2.051 ms** Normal → Warning spread | Two matching trials; broader jitter qualification remains open |
+| Thermal / workload overshoot | **0.4 °C physical thermal excess**; **6 CPU percentage points / 2 demand-index points** workload excess | 100 ms score windows; thermal from the physical demo, workload from the separate standard integration campaign |
+| State-transition jitter | **2.051 ms** Normal → Warning spread | Recorded matched-pair reference, n=2; expanded repetition tracked in the qualification checklist |
 | Controlled restoration | **3,057.061 ms** worst across 35 recoveries | Includes the declared 2 s + 1 s observation |
+
+**Performance investigation · [PG-PERF-01](docs/timing-investigation.md):** the
+physical demo records **18.729 ms** with tracing off. Under full kernel tracing,
+one restriction took **20.646278 ms**, **0.646278 ms above** the 20 ms target;
+critical control still completed **5,161 captured jobs with zero misses or gaps**.
+The investigation tracks trace cost, management scheduling and ordered worker
+wake-ups, with an optimization and regression plan. Trace-on diagnostics and
+passing trace-off measurements retain their separate scopes.
 
 **Fault resilience:** 30/30 manager stalls confirmed within the 20 ms bound from
 the unchanged 50 ms progress-expiry deadline; worst receipt **12.135167 ms**.
@@ -205,18 +214,19 @@ The `.milestone-*` files support archived teammate benchmark builds and retain
 their original paths. Generated `build/` and `results/` directories are ignored.
 See the [scripts guide](scripts/README.md) before using historical remote menus.
 
-## Demonstration scope and remaining qualification
+## Validation coverage
 
 The original jury menu uses **simulated temperature**, **real measured per-core
 CPU**, and a **demand index**. The separate [real-sensor demo](docs/real-thermal-integration.md)
-now verifies the integrated physical input path, CPU restriction, producer
-freshness and recovery. Standard-profile thermal peak/cooldown qualification and physical
-LED/wiring validation remain open. The required LED feature must therefore
-not be described as hardware-verified. Pi 5/BSP qualification, larger matched
-jitter trials, total split-stack overhead and long-duration interference tests
-also remain open in the [qualification checklist](docs/threadctl-checklist.md).
-Hardware power measurement and dynamic frequency control are optional stretch
-goals. GPIO uses 3.3 V logic; verify board mapping and series resistors.
+verifies the integrated physical input path, CPU restriction, producer freshness
+and recovery. The labelled lower-temperature profile adds actual physical trips,
+all five states and staged restoration. The GPIO observer implements all five
+state outputs; physical wiring acceptance is tracked separately. The
+[qualification checklist](docs/threadctl-checklist.md) defines the next coverage
+for standard-profile thermal peak/cooldown, Pi 5/BSP, repeated jitter, total
+split-stack overhead and sustained interference. Hardware power measurement and
+dynamic frequency control are optional stretch goals. GPIO uses 3.3 V logic;
+verify board mapping and series resistors.
 
 ## Team and acknowledgements
 

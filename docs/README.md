@@ -13,6 +13,7 @@ with its independent enforcer; older bench results have a different scope.
 | Can we demonstrate physical temperature trips at a lower bench temperature? | [Labelled low-temperature demo](low-temperature-demo.md) |
 | What did the operator's SSH rerun show? | [Independent SSH validation](ssh-validation-followup.md) |
 | Which System Profiler screenshots should we take? | [Capture commands and screenshot list](system-profiler-screenshots.md) |
+| How is the full-trace timing margin being investigated? | [PG-PERF-01: measurements, likely contributors and improvement plan](timing-investigation.md) |
 | What was measured, and where is the evidence? | [Current integration validation](teammate3-merge-validation.md), [raw evidence and reproduction](validation/README.md), and [JSON summary](validation/teammate3-merge-pi4-summary.json) |
 | What is implemented versus hardware-qualified? | [Implementation and Pi checklist](threadctl-checklist.md) |
 | Where is each function and contract? | [Source guide](source-guide.md) |

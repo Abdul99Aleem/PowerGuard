@@ -2,6 +2,10 @@
 
 Latest additions:
 
+- [PG-PERF-01 timing investigation](../timing-investigation.md): exact full-trace
+  restriction timestamps, preserved critical timing, and a staged optimization
+  plan with separate diagnostic evidence.
+
 - [Operator's SSH rerun](../ssh-validation-followup.md): 1,923 complete critical
   jobs, zero misses/gaps, standard temperature profile.
 - [Physical low-temperature demo](../low-temperature-demo.md): 1,564 real

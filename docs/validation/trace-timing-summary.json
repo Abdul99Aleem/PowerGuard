@@ -1,0 +1,74 @@
+{
+  "id": "PG-PERF-01",
+  "status": "open performance investigation",
+  "date": "2026-11-21",
+  "profile": "LOW-TEMPERATURE-DEMO",
+  "capture_mode": "Full kernel tracing,90 seconds",
+  "instance": "low_thermal_61833269",
+  "restriction_target_ns": 20000000,
+  "restriction_excess_ns": 646278,
+  "delayed_decision": {
+    "epoch": 44116494625222,
+    "decision_id": 5,
+    "restriction": 1,
+    "detected_ns": 44127610630315,
+    "effective_ns": 44127631276593,
+    "received_ns": 44127631751167,
+    "effect_latency_ns": 20646278,
+    "confirmation_latency_ns": 21120852,
+    "causes": 1
+  },
+  "nc2_effective_ns": 44127626306333,
+  "nc2_to_nc1_ns": 4970260,
+  "raw_jobs": {
+    "source": "jobs.csv",
+    "first_id": 1,
+    "last_id": 5161,
+    "jobs": 5161,
+    "gaps": [],
+    "invalid_timestamps": [],
+    "period_errors": 0,
+    "deadline_misses": 0,
+    "missed_ids": [],
+    "response": {
+      "n": 5161,
+      "p50_ns": 566222,
+      "p95_ns": 637203,
+      "p99_ns": 644370,
+      "max_ns": 1297722
+    },
+    "release_lateness": {
+      "n": 5161,
+      "p50_ns": 32111,
+      "p95_ns": 39296,
+      "p99_ns": 54240,
+      "max_ns": 819166
+    },
+    "execution_wall_time": {
+      "n": 5161,
+      "p50_ns": 533425,
+      "p95_ns": 600260,
+      "p99_ns": 600463,
+      "max_ns": 603352
+    },
+    "pass": true
+  },
+  "scorecard": "QNX supervisor scorecard\n1. Restriction within 20.0 ms: FAIL  confirmed=2 late=1 unconfirmed=0 pending=0 worst=20.646 ms\n2. Critical deadline misses: 0/5156 reported jobs, missing records=0, max completed latency=1.298 ms, latest latency=0.639 ms\n3. Worst observed overshoot in 100 ms windows: thermal=0.4 C\n4. Transition jitter, case 1 Normal to Warning: need two matching trials (n=0)\n5. Controlled restoration: last=3056.604 ms worst=3056.604 ms n=1\n",
+  "trace_off_reference": "low-temperature-summary.json",
+  "root_cause_status": "Candidate contributors identified; per-stage trace attribution and matched repetitions required",
+  "candidate_contributors": [
+    "trace instrumentation,buffer and filesystem cost",
+    "CPU0 scheduling of acquisition/forwarding/enforcement",
+    "2ms enforcer polling phase",
+    "5ms NC worker boundaries and mandatory NC2-before-NC1 acknowledgement"
+  ],
+  "optimization_plan": [
+    "attribute per-stage timestamps on the same decision",
+    "matched trace-off/selective/full-trace experiments",
+    "evaluate bounded decision notifications or shorter enforcer waits",
+    "evaluate cooperative gate wake-ups preserving ordering",
+    "repeat latency,critical timing,freshness,recovery and watchdog acceptance"
+  ],
+  "trace_file": "profile-1795227410.kev",
+  "large_trace_location": "Local results/profiler and target /tmp/pg-low-thermal-1795226936; raw trace not bundled"
+}

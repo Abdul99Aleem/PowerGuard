@@ -83,6 +83,12 @@ real-temperature control loop or total-stack overhead.
 
 ## Remaining delivery checks
 
+- [ ] **PG-PERF-01 — trace-on restriction margin:** attribute the 20.646278 ms
+  full-trace result and validate a larger margin below the unchanged 20 ms
+  target. The trace-off physical demo records 18.729 ms; the diagnostic run
+  preserves zero misses/gaps across 5,161 critical jobs. See the
+  [measured breakdown and optimization plan](timing-investigation.md).
+
 Real-sensor follow-up on 21 November 2026: the new runtime sink passes physical
 input, managed CPU spike, producer pause and staged recovery on the Pi 4B.
 730 real readings and 2,135 complete critical jobs were captured, with zero
