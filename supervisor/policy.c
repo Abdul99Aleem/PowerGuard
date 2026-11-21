@@ -19,7 +19,10 @@ typedef struct {
     int critical;
 } limits;
 
-static const limits thermal = {.clear = 620, .warn = 650, .throttle = 700, .critical = 750};
+static const limits thermal = {.clear = PG_THERMAL_CLEAR_DECI,
+                               .warn = PG_THERMAL_WARN_DECI,
+                               .throttle = PG_THERMAL_THROTTLE_DECI,
+                               .critical = PG_THERMAL_CRITICAL_DECI};
 static const limits cpu = {.clear = 55, .warn = 70, .throttle = 85, .critical = 95};
 static const limits power = {.clear = 45, .warn = 60, .throttle = 75, .critical = 90};
 

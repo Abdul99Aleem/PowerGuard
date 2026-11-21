@@ -1,0 +1,47 @@
+{
+  "date": "2026-11-21",
+  "instance": "real_thermal_55328819",
+  "origin": "Operator SSH repeat; raw files retrieved from Pi and independently analyzed",
+  "profile": "STANDARD: clear62C warning65C throttled70C critical75C",
+  "raw_jobs": {
+    "source": "jobs.csv",
+    "first_id": 1,
+    "last_id": 1923,
+    "jobs": 1923,
+    "gaps": [],
+    "invalid_timestamps": [],
+    "period_errors": 0,
+    "deadline_misses": 0,
+    "missed_ids": [],
+    "response": {
+      "n": 1923,
+      "p50_ns": 627685,
+      "p95_ns": 644259,
+      "p99_ns": 673481,
+      "max_ns": 1137481
+    },
+    "release_lateness": {
+      "n": 1923,
+      "p50_ns": 28666,
+      "p95_ns": 50148,
+      "p99_ns": 74277,
+      "max_ns": 660537
+    },
+    "execution_wall_time": {
+      "n": 1923,
+      "p50_ns": 600259,
+      "p95_ns": 600408,
+      "p99_ns": 600685,
+      "max_ns": 666723
+    },
+    "pass": true
+  },
+  "scorecard": "QNX supervisor scorecard\n1. Restriction within 20.0 ms: PASS  confirmed=2 late=0 unconfirmed=0 pending=0 worst=9.469 ms\n2. Critical deadline misses: 0/1912 reported jobs, missing records=0, max completed latency=1.137 ms, latest latency=0.561 ms\n3. Worst observed overshoot in 100 ms windows: CPU=4 percentage points power=2 index points\n4. Transition jitter, case 1 Normal to Warning: need two matching trials (n=0)\n5. Controlled restoration: last=3052.770 ms worst=3052.770 ms n=2\n",
+  "real_readings": 635,
+  "minimum_c": 54.0,
+  "maximum_c": 57.4,
+  "critical_trigger": "Paused producer / BAD_TEMP 0x8, not thermal limit",
+  "jitter_qualified": false,
+  "physical_thermal_threshold_crossed": false,
+  "capture_note": "Partial 120s allocation stopped after acceptance; interrupted=1; missing4165 includes unused allocation and deliberate producer pause."
+}

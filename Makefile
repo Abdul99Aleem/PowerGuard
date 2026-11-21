@@ -66,6 +66,19 @@ SUPERVISOR_CHECK_OBJS = $(OUTPUT_DIR)/tools/pg-supervisor-check.o $(THREADCTL_OB
 OBJS = $(sort $(SERVICE_OBJS) $(CONSOLE_OBJS) $(CHECK_OBJS) $(MANAGER_OBJS) $(LED_OBJS) $(RUNTIME_OBJS) $(THREADCTL_CHECK_OBJS) $(VALIDATE_OBJS) $(ENFORCER_OBJS) $(STALL_CHECK_OBJS) $(MANAGER_CHECK_OBJS))
 OBJS += $(MERGE_CHECK_OBJS) $(SUPERVISOR_CHECK_OBJS)
 
+.PHONY: thermal-demo
+thermal-demo: $(OUTPUT_DIR)/PowerGuard-thermal-demo $(OUTPUT_DIR)/pg-thermal-demo-check $(OUTPUT_DIR)/pg-demo-heater
+
+$(OUTPUT_DIR)/pg-demo-heater: tools/pg-demo-heater.c $(THREADCTL_OBJ) include/pg_threadctl.h
+	$(CC) $(INCLUDES) $(CCFLAGS_all) $(CCFLAGS) -o $@ tools/pg-demo-heater.c $(THREADCTL_OBJ) $(LDFLAGS_all) $(LDFLAGS) $(LIBS_all) $(LIBS) -pthread
+
+$(OUTPUT_DIR)/PowerGuard-thermal-demo: src/PowerGuard.c supervisor/policy.c supervisor/metrics.c $(THREADCTL_OBJ) $(PROGRESS_OBJ) $(wildcard include/*.h)
+	$(CC) $(INCLUDES) $(CCFLAGS_all) $(CCFLAGS) -DPG_THERMAL_DEMO -o $@ src/PowerGuard.c supervisor/policy.c supervisor/metrics.c $(THREADCTL_OBJ) $(PROGRESS_OBJ) $(LDFLAGS_all) $(LDFLAGS) $(LIBS_all) $(LIBS)
+
+$(OUTPUT_DIR)/pg-thermal-demo-check: tests/thermal_demo_checks.c supervisor/policy.c $(wildcard include/*.h)
+	@mkdir -p $(OUTPUT_DIR)
+	$(CC) $(INCLUDES) $(CCFLAGS_all) $(CCFLAGS) -DPG_THERMAL_DEMO -o $@ supervisor/policy.c tests/thermal_demo_checks.c $(LDFLAGS_all) $(LDFLAGS) $(LIBS_all) $(LIBS)
+
 all: $(TARGET) $(OUTPUT_DIR)/pg-console $(OUTPUT_DIR)/pg-check $(OUTPUT_DIR)/pg-manager $(OUTPUT_DIR)/pg-state-leds $(OUTPUT_DIR)/pg-thermal $(OUTPUT_DIR)/pg-runtime $(OUTPUT_DIR)/pg-threadctl-check $(OUTPUT_DIR)/pg-validate $(OUTPUT_DIR)/pg-enforcer $(OUTPUT_DIR)/pg-stall-check $(OUTPUT_DIR)/pg-manager-check $(OUTPUT_DIR)/pg-merge-check $(OUTPUT_DIR)/pg-supervisor-check
 
 $(OUTPUT_DIR)/pg-supervisor-check: $(SUPERVISOR_CHECK_OBJS)

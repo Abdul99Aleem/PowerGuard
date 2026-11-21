@@ -1,0 +1,87 @@
+{
+  "date": "2026-11-21",
+  "profile": "LOW-TEMPERATURE-DEMO",
+  "target_directory": "/tmp/pg-low-thermal-1795226936",
+  "instance": "low_thermal_59875380",
+  "thresholds_c": {
+    "clear": 56.0,
+    "warning": 56.5,
+    "throttled": 57.0,
+    "critical": 57.5
+  },
+  "standard_thresholds_c": {
+    "clear": 62,
+    "warning": 65,
+    "throttled": 70,
+    "critical": 75
+  },
+  "pass": true,
+  "raw_jobs": {
+    "source": "final/jobs.csv",
+    "first_id": 1,
+    "last_id": 4118,
+    "jobs": 4118,
+    "gaps": [],
+    "invalid_timestamps": [],
+    "period_errors": 0,
+    "deadline_misses": 0,
+    "missed_ids": [],
+    "response": {
+      "n": 4118,
+      "p50_ns": 554389,
+      "p95_ns": 631185,
+      "p99_ns": 642445,
+      "max_ns": 1149482
+    },
+    "release_lateness": {
+      "n": 4118,
+      "p50_ns": 20982,
+      "p95_ns": 24259,
+      "p99_ns": 42556,
+      "max_ns": 673333
+    },
+    "execution_wall_time": {
+      "n": 4118,
+      "p50_ns": 533407,
+      "p95_ns": 607481,
+      "p99_ns": 614204,
+      "max_ns": 643352
+    },
+    "pass": true
+  },
+  "temperature": {
+    "readings": 1564,
+    "minimum_c": 53.0,
+    "maximum_c": 58.4
+  },
+  "runtime_state_counts": {
+    "0": 39,
+    "4": 606,
+    "5": 676,
+    "1": 108,
+    "2": 11,
+    "3": 104
+  },
+  "runtime_state_encoding": "0 Unknown,1 Normal,2 Warning,3 Throttled,4 Critical,5 Recovery; policy uses 0..4 without Unknown",
+  "scorecard": "QNX supervisor scorecard\n1. Restriction within 20.0 ms: PASS  confirmed=2 late=0 unconfirmed=0 pending=0 worst=18.729 ms\n2. Critical deadline misses: 0/4113 reported jobs, missing records=0, max completed latency=1.149 ms, latest latency=0.582 ms\n3. Worst observed overshoot in 100 ms windows: thermal=0.4 C\n4. Transition jitter, case 1 Normal to Warning: need two matching trials (n=0)\n5. Controlled restoration: last=3055.535 ms worst=3055.535 ms n=1\n",
+  "heater": "External bounded disturbance: 20 seconds,30% duty each core,FIFO1; not a managed application workload",
+  "initial_failure": "55C clear limit too close to idle fluctuations; physical trips occurred but recovery did not qualify. Final separate demo band selected from observed board behavior. No production thresholds or dwell durations relaxed.",
+  "source_sha256": {
+    "supervisor/policy.c": "09ca9d103b1a2fb18abba0120812508d1ce3e93f614eabf7cb7752465e9a627e",
+    "include/policy.h": "e12bb2b9024ccbbadabccfac2f38e08d629116c469b09da4ed65f42ce115fd76",
+    "src/PowerGuard.c": "d1ca025a0edea1326ceed1ecef64c47ee8daec8fc534c1f2590ed3dda6bca266",
+    "tools/pg-demo-heater.c": "a187ed14a8b798aab4d981668f3734bbbc6e6b7769463a0b6e12d8dfd50d5bf5",
+    "scripts/low-temperature-demo.sh": "60664abb3e436b2a8839a080a802ea4e63f650d51e44bd8579c9d6e07199f67c",
+    "tests/thermal_demo_checks.c": "dd54a838343f539a9d1baf4996fc87721efbace109fa60c66d520a13b9416583"
+  },
+  "source_hash_format": "SHA256 after CRLF-to-LF normalization",
+  "binary_sha256": {
+    "PowerGuard-thermal-demo": "59f5601e372a1594e7e322403da496a480c5a6367a138a8d69310b483eec41eb",
+    "pg-demo-heater": "b5e2460c94f546ebf6bd58f2af5ca930bba293994401da62225596fa40d4507d",
+    "pg-thermal-demo-check": "13a995d0648ce957ffa5a694cc14825fa558bcb29ef68dfc767abb58ed490cd3",
+    "pg-runtime": "dafea65c7d3fde32a67112a23f82e3a969fa55a79d517a6943be8f3be7a807f8",
+    "pg-manager": "2add450ec41c7945ec19ede8937c52592fc1db4356dbab758f801425949970a1",
+    "pg-enforcer": "0405f0b5e3a6a1fb804e6a7e5c7768f0c377a17fd50a1cf625351346e0b1ddc9",
+    "pg-thermal": "ced73734f23bc89bb04a7ecf7ad5e2feba674acbef0b47a7b1d5a22b7e503733"
+  }
+}

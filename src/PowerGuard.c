@@ -77,6 +77,15 @@ int main(int argc, char **argv)
         return 1;
     }
     pg_thread_print(&placement);
+    printf("THERMAL_PROFILE=%s clear=%.1fC warning=%.1fC throttled=%.1fC critical=%.1fC\n",
+#ifdef PG_THERMAL_DEMO
+           "LOW-TEMPERATURE-DEMO",
+#else
+           "STANDARD",
+#endif
+           PG_THERMAL_CLEAR_DECI / 10., PG_THERMAL_WARN_DECI / 10.,
+           PG_THERMAL_THROTTLE_DECI / 10., PG_THERMAL_CRITICAL_DECI / 10.);
+    fflush(stdout);
 
     name_attach_t *server = name_attach(NULL, PG_NAME, 0);
     if (!server) {

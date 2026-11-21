@@ -1,5 +1,15 @@
 # Evidence and final audit
 
+Latest additions:
+
+- [Operator's SSH rerun](../ssh-validation-followup.md): 1,923 complete critical
+  jobs, zero misses/gaps, standard temperature profile.
+- [Physical low-temperature demo](../low-temperature-demo.md): 1,564 real
+  readings, all five states, 4,118 complete jobs with zero misses, and an actual
+  temperature-only trip under separately labelled demo limits.
+- [System Profiler screenshots](../system-profiler-screenshots.md): exact capture
+  commands and the five recommended views.
+
 ## Real sensor follow-up
 
 The [real thermal evidence bundle](real-thermal-pi4-evidence.zip) and

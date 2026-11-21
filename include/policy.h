@@ -23,6 +23,19 @@
 #define PG_MANAGER_MAX_AGE (50 * PG_MS)
 #define PG_RESPONSE_TARGET (20 * PG_MS)
 
+/* A separate, explicitly labelled executable demonstrates low-temperature trips. */
+#ifdef PG_THERMAL_DEMO
+#define PG_THERMAL_CLEAR_DECI 560
+#define PG_THERMAL_WARN_DECI 565
+#define PG_THERMAL_THROTTLE_DECI 570
+#define PG_THERMAL_CRITICAL_DECI 575
+#else
+#define PG_THERMAL_CLEAR_DECI 620
+#define PG_THERMAL_WARN_DECI 650
+#define PG_THERMAL_THROTTLE_DECI 700
+#define PG_THERMAL_CRITICAL_DECI 750
+#endif
+
 enum pg_state { NORMAL, WARNING, THROTTLED, CRITICAL, RECOVERY };
 
 enum pg_reason {

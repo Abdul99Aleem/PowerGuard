@@ -10,6 +10,9 @@ with its independent enforcer; older bench results have a different scope.
 | --- | --- |
 | Does it address every part of problem 16? | [Requirement-by-requirement jury checklist](jury-checklist.md) |
 | How do we see it work? | [Jury demo and deployment manifest](jury-runbook.md) |
+| Can we demonstrate physical temperature trips at a lower bench temperature? | [Labelled low-temperature demo](low-temperature-demo.md) |
+| What did the operator's SSH rerun show? | [Independent SSH validation](ssh-validation-followup.md) |
+| Which System Profiler screenshots should we take? | [Capture commands and screenshot list](system-profiler-screenshots.md) |
 | What was measured, and where is the evidence? | [Current integration validation](teammate3-merge-validation.md), [raw evidence and reproduction](validation/README.md), and [JSON summary](validation/teammate3-merge-pi4-summary.json) |
 | What is implemented versus hardware-qualified? | [Implementation and Pi checklist](threadctl-checklist.md) |
 | Where is each function and contract? | [Source guide](source-guide.md) |

@@ -1,5 +1,10 @@
 # Regression suite
 
+`thermal_demo_checks.c` also verifies the separate demo profile's activation
+boundaries, ordered workload caps and full recovery dwell. It is built with
+`PG_THERMAL_DEMO` by the host script and QNX `thermal-demo` target. The standard
+policy regression remains compiled with the original thresholds.
+
 For all portable checks with a C11 compiler and Python 3, from the repository:
 
 ```sh

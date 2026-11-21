@@ -7,6 +7,7 @@
 | [validate-threadctl.sh](validate-threadctl.sh) | QNX qualification and fault campaign; requires the full deployed bundle and verified idle-thread IDs |
 | [validate-startup-latch.sh](validate-startup-latch.sh) | QNX startup admission and persistent watchdog-latch regression |
 | [validate-real-thermal.sh](validate-real-thermal.sh) | New real `/dev/thermal` integration acceptance: pulse acquisition, CPU spike, sensor-producer expiry and staged recovery |
+| [low-temperature-demo.sh](low-temperature-demo.sh) | Explicit low-temperature executable, bounded physical heating, temperature-driven restrictions and cooldown/recovery |
 | [remote-cli/](remote-cli/) | Optional Windows SSH console helper; passes simulated policy inputs. It does not assemble or qualify the current full stack |
 | [legacy/remote-cli/](legacy/remote-cli/) | Original remote-console helper retained for historical reference |
 | [Legacy remote-console ZIP](legacy/PowerGuard_Remote_CLI_Windows_FIXED.zip) | Original packaged distribution, preserved unchanged; prefer the unpacked helper for inspection |

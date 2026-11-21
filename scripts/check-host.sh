@@ -22,4 +22,7 @@ mkdir -p "$out"
 "$compiler" -std=c11 -Wall -Wextra -Werror -Iinclude -Itestbench \
     supervisor/policy.c tests/thermal_checks.c -o "$out/pg-thermal-check"
 "$out/pg-thermal-check"
+"$compiler" -std=c11 -Wall -Wextra -Werror -DPG_THERMAL_DEMO -Iinclude \
+    supervisor/policy.c tests/thermal_demo_checks.c -o "$out/pg-thermal-demo-check"
+"$out/pg-thermal-demo-check"
 "$python" -m unittest discover -s tests -p 'test_*.py' -v

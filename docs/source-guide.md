@@ -13,6 +13,11 @@ available for the original reproducible scenarios.
 
 Team Schedulix · QNX eHACK submission
 
+The policy table below describes the standard executable. The explicitly
+labelled [low-temperature demo](low-temperature-demo.md) builds the same policy
+with separate 56.5/57.0/57.5 °C activation limits and a 56.0 °C clear limit;
+it does not redefine the standard thresholds.
+
 PowerGuard runs one periodic critical workload and two budgeted noncritical workloads on a four-core QNX target. To follow a restriction from input to evidence, start with `pg_ingest` in the policy, then read `main` in the enforcer, `ordered_cap` in the runtime and `pg_effect` back in the policy. A decision, a worker applying it, and the supervisor receiving confirmation each have a separate timestamp.
 
 [Supervisor and policy](#supervisor-and-policy) · [Interfaces](#interfaces) · [Runtime and platform](#runtime-and-platform) · [Telemetry and operator tools](#telemetry-and-operator-tools) · [Bench and target trials](#bench-and-target-trials) · [Regression checks](#regression-checks) · [Build and operator scripts](#build-and-operator-scripts)

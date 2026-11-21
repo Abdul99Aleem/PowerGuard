@@ -19,6 +19,11 @@ at 25 ms pulse releases; managed CPU restriction, stale-producer fail-safe and
 staged recovery passed. **2,135 critical jobs, zero misses; 0.9865 ms maximum
 response.** [Live demo, results and raw evidence →](docs/real-thermal-integration.md)
 
+**Physical temperature-trip demo also passes:** an explicitly labelled
+**56.5 / 57.0 / 57.5 °C** demo profile shows all five states, temperature-driven
+restrictions and staged recovery with **4,118 critical jobs and zero misses**.
+[Run the lower-temperature executable →](docs/low-temperature-demo.md)
+
 ## Results at a glance
 
 Recorded on **Raspberry Pi 4B · QNX 8.0.0 · aarch64le release**. These are
@@ -170,6 +175,10 @@ It connects the pulse reader to the managed runtime without mixing simulated
 temperature into the policy stream. Run `validate-real-thermal.sh` from the
 deployed release bundle to repeat its live acceptance sequence.
 
+For the separate lower-temperature executable and bounded heating fixture,
+build `make BUILD_PROFILE=release thermal-demo`; see its
+[physical demonstration guide](docs/low-temperature-demo.md).
+
 ## Repository map
 
 ```text
@@ -201,7 +210,7 @@ See the [scripts guide](scripts/README.md) before using historical remote menus.
 The original jury menu uses **simulated temperature**, **real measured per-core
 CPU**, and a **demand index**. The separate [real-sensor demo](docs/real-thermal-integration.md)
 now verifies the integrated physical input path, CPU restriction, producer
-freshness and recovery. Physical thermal-threshold peak/cooldown and physical
+freshness and recovery. Standard-profile thermal peak/cooldown qualification and physical
 LED/wiring validation remain open. The required LED feature must therefore
 not be described as hardware-verified. Pi 5/BSP qualification, larger matched
 jitter trials, total split-stack overhead and long-duration interference tests

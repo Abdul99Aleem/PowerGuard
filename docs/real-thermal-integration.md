@@ -21,6 +21,11 @@ available separately for reproducible thermal-ramp tests.
 **[Raw live evidence](validation/real-thermal-pi4-evidence.zip)** ·
 **[Machine-readable summary](validation/real-thermal-pi4-summary.json)**
 
+The operator's later [SSH repeat](ssh-validation-followup.md) also passes and
+has its own downloadable raw capture. To demonstrate **physical temperature
+activation**, use the separately labelled [low-temperature profile](low-temperature-demo.md),
+and follow the [System Profiler screenshot guide](system-profiler-screenshots.md).
+
 The recorder ends at job 2,135; the earlier scorecard ends at 2,130. These are
 different endpoints, both with zero internal gaps. The sensor stayed below
 65 °C, so this run establishes the real input path, CPU restriction and producer
