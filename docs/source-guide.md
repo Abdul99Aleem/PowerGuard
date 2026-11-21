@@ -290,9 +290,9 @@ Runs the threaded bench and watchdog without a supervisor, then checks that a po
 
 ### Windows remote console
 
-Both [original launcher](../scripts/PowerGuard_Remote_CLI_Windows/powerguard_remote_cli/PowerGuard-Remote.ps1) and [updated launcher](../scripts/PowerGuard_Remote_CLI_Windows_FIXED/powerguard_remote_cli/PowerGuard-Remote.ps1) check for OpenSSH, copy the menu to the board and open an interactive SSH session. Each PowerShell script executes at top level.
+Both [original launcher](../scripts/legacy/remote-cli/PowerGuard-Remote.ps1) and [updated launcher](../scripts/remote-cli/PowerGuard-Remote.ps1) check for OpenSSH, copy the menu to the board and open an interactive SSH session. Each PowerShell script executes at top level.
 
-The [original menu](../scripts/PowerGuard_Remote_CLI_Windows/powerguard_remote_cli/pg-remote-menu.sh) and [updated menu](../scripts/PowerGuard_Remote_CLI_Windows_FIXED/powerguard_remote_cli/pg-remote-menu.sh) share these functions. `have` checks an executable under `/tmp` and `line` prints the menu divider. `status` inspects processes and the live scorecard. `run_console` sends simulated input, `custom` prompts for its values, and `start_service` checks for an existing supervisor before starting one. `bench` queries the threaded workload, `bench_scenario` selects its scenario and `leds` starts the board-specific observer.
+The [original menu](../scripts/legacy/remote-cli/pg-remote-menu.sh) and [updated menu](../scripts/remote-cli/pg-remote-menu.sh) share these functions. `have` checks an executable under `/tmp` and `line` prints the menu divider. `status` inspects processes and the live scorecard. `run_console` sends simulated input, `custom` prompts for its values, and `start_service` checks for an existing supervisor before starting one. `bench` queries the threaded workload, `bench_scenario` selects its scenario and `leds` starts the board-specific observer.
 
 ## Coding and verification scope
 

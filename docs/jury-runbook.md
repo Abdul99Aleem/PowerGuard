@@ -6,7 +6,7 @@ change the policy, thresholds or workload code.
 
 ## Open the demo on the prepared Pi
 
-In the Pi terminal (the board at `10.78.56.80`):
+In a terminal connected to the prepared QNX Pi, using its current network address:
 
 ```sh
 cd /tmp/pg-t3-merge-2111

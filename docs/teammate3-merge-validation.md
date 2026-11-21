@@ -9,7 +9,11 @@ placement, and the existing 50 ms manager-progress / 20 ms receipt contract.
 
 The committed [evidence summary](validation/teammate3-merge-pi4-summary.json)
 identifies the binaries, source blobs, target directories and test scopes.
-Raw captures remain under `results/teammate3-merge/` locally and the named
+The final documentation audit also packages 26 selected verified-run raw files
+in the [downloadable evidence bundle](validation/pi4-integrated-evidence.zip),
+including jobs, samples, stall receipts, restart logs and both fault scorecards.
+See the [reproduction guide](validation/README.md). Broader raw captures remain
+under `results/teammate3-merge/` locally and the named
 directories under `/tmp/pg-t3-merge-2111` on the Pi. Tests use private instance
 names and stop only their own processes. HAM and physical GPIO are not enabled.
 

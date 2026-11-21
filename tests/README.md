@@ -1,5 +1,17 @@
 # Regression suite
 
+For all portable checks with a C11 compiler and Python 3, from the repository:
+
+```sh
+sh scripts/check-host.sh
+```
+
+This runs policy/metric replay, manager-progress and immutable-receipt checks,
+watchdog-latch and negative benchmark checks, and Python evidence-analysis
+tests. Outputs are ignored under `build/host-checks/`. Set `CC` or `PYTHON` to
+an alternate compiler/interpreter executable when needed. These checks do not
+qualify QNX scheduling or physical hardware.
+
 For the separate-process ThreadCtl runtime and the manager-stall fix, see the
 [complete architecture and problem-resolution guide](../docs/powerguard-design-and-manager-stall-fix.md)
 and [Pi validation report](../docs/manager-stall-fix-validation.md).
