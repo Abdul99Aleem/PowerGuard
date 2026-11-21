@@ -72,10 +72,10 @@
     "long soak and total monitoring overhead"
   ],
   "source_sha256": {
-    "runtime/runtime.c": "968b2b86cd4934f2ea492e58599630a5c5baad381e94d406f12ddd636971a268",
-    "manager/pg-manager.c": "6c2737da26721ba651309a051a59fdbb07d25dda2a4448261b0a8c815fa33b98",
-    "telemetry/thermal.c": "ef017a73905cea9641f2c481f5a25a78eb8b28a1252ad7ea698ca5d40d036566",
-    "testbench/pgbench_protocol.h": "1a15ba2ef98cde71a89c929939254085e9c63dd3b0c6c94653ff8765e0449d9b",
+    "runtime/runtime.c": "bd596745a8d3bb9ba25403a4e708345b05505805932903909f1d18968687965b",
+    "manager/pg-manager.c": "6d5398ed09ec0678b7b2a044c6c57ff3616706816f3c0170d56e38b52005ebf1",
+    "telemetry/thermal.c": "6748d9190080e458c7b27b883e686f47080b435fb6e877c93ad1f4283d330a73",
+    "testbench/pgbench_protocol.h": "af077a609a5d4df6cb5d0985fc80482bdb316b529fe715ae27a38fe56a8f2fcd",
     "include/pg_thermal_bridge.h": "d1ad7994b83dd8e9954c4f8259aaff9f39cadbb75d2791f9b7f194174b25dfde",
     "tests/thermal_checks.c": "566d3445f8a4aba42f59535ab7e0d30fe40f92b01c051b19cde5ea4134776490",
     "scripts/validate-real-thermal.sh": "3a053bc39b96e1cb39f7d95e5bf8a8c297e3a2fdcfa67cdde9eae5cae992724b"
@@ -143,5 +143,7 @@
     "supervisor_latch": "PASS supervisor_stop_ns=41884052617907 last_progress_ns=41884052612019 forced_ns=41884272490204 both_off_ns=41884105057222 observed_ns=41884274035111 observed_from_progress_ns=221423092 latched_after_resume=1\n",
     "scorecard": "QNX supervisor scorecard\n1. Restriction within 20.0 ms: PASS  confirmed=8 late=0 unconfirmed=0 pending=0 worst=10.555 ms\n2. Critical deadline misses: 0/7650 reported jobs, missing records=0, max completed latency=1.126 ms, latest latency=0.701 ms\n3. Worst observed overshoot in 100 ms windows: thermal=0.0 C CPU=0 percentage points power=2 index points\n4. Transition jitter, case 1 Normal to Warning: need two matching trials (n=1)\n5. Controlled restoration: last=3036.168 ms worst=3055.307 ms n=7\n",
     "post_fault_scorecard": "QNX supervisor scorecard\n1. Restriction within 20.0 ms: FAIL  confirmed=9 late=1 unconfirmed=0 pending=0 worst=957.378 ms\n2. Critical deadline misses: 0/7854 reported jobs, missing records=0, max completed latency=1.126 ms, latest latency=0.620 ms\n3. Worst observed overshoot in 100 ms windows: thermal=0.0 C CPU=0 percentage points power=2 index points\n4. Transition jitter, case 1 Normal to Warning: need two matching trials (n=1)\n5. Controlled restoration: last=3036.168 ms worst=3055.307 ms n=7\n"
-  }
+  },
+  "source_hash_format": "SHA-256 of source bytes after CRLF-to-LF normalization; portable across Git checkouts",
+  "tested_code_commit": "5178af578686f7b0857d4606ef8c303cfbca5e5c"
 }
